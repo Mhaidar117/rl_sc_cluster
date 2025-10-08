@@ -1,5 +1,8 @@
 # RLscCluster
 
+This repository is currently under development. If you are interested in how RL can be used for scRNA-seq cluster refinement, please come back in a couple months.
+
+
 <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
 </a>
