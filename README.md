@@ -1,6 +1,6 @@
 # RLscCluster
 
-This repository is currently under development. If you are interested in how RL can be used for scRNA-seq cluster refinement, please come back in a couple months.
+This repository is currently under development. If you are interested in how RL can be used for scRNA-seq cluster refinement, please come back in a couple weeks.
 
 
 <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
