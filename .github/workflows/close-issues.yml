@@ -1,15 +1,15 @@
 name: Close Issues
 
 on:
-  push:
-    branches:
-      - 'feature/rl_environment*'
-      - main
+  pull_request:
+    types:
+      - closed
 
 jobs:
   close-issues:
     name: Auto-close Issues from Commits
     runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,8 +24,20 @@ jobs:
             const { context } = require('@actions/github');
             const { execSync } = require('child_process');
 
-            // Get commit messages from the push
-            const commits = context.payload.commits || [];
+            // Only process if merged to feature/rl_environment or main
+            const baseBranch = context.payload.pull_request.base.ref;
+            if (baseBranch !== 'feature/rl_environment' && baseBranch !== 'main') {
+              console.log(`Skipping: PR merged to ${baseBranch}, not feature/rl_environment or main`);
+              return;
+            }
+
+            // Get all commits from the PR
+            const prNumber = context.payload.pull_request.number;
+            const commitsResponse = await github.rest.pulls.listCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
 
             // Regex to match issue closing keywords
             const issueRegex = /(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved|refs?)\s+#(\d+)/gi;
@@ -33,8 +45,8 @@ jobs:
             const closedIssues = new Set();
 
             // Check each commit message
-            for (const commit of commits) {
-              const message = commit.message || '';
+            for (const commit of commitsResponse.data) {
+              const message = commit.commit.message || '';
               const matches = [...message.matchAll(issueRegex)];
 
               for (const match of matches) {
