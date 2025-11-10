@@ -1,0 +1,63 @@
+name: Close Issues
+
+on:
+  push:
+    branches:
+      - 'feature/rl_environment*'
+      - main
+
+jobs:
+  close-issues:
+    name: Auto-close Issues from Commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Close issues from commit messages
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { context } = require('@actions/github');
+            const { execSync } = require('child_process');
+
+            // Get commit messages from the push
+            const commits = context.payload.commits || [];
+
+            // Regex to match issue closing keywords
+            const issueRegex = /(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved|refs?)\s+#(\d+)/gi;
+
+            const closedIssues = new Set();
+
+            // Check each commit message
+            for (const commit of commits) {
+              const message = commit.message || '';
+              const matches = [...message.matchAll(issueRegex)];
+
+              for (const match of matches) {
+                const issueNum = parseInt(match[1], 10);
+                closedIssues.add(issueNum);
+              }
+            }
+
+            // Close each issue
+            for (const issueNum of closedIssues) {
+              try {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNum,
+                  state: 'closed'
+                });
+                console.log(`Closed issue #${issueNum}`);
+              } catch (error) {
+                console.error(`Failed to close issue #${issueNum}:`, error.message);
+              }
+            }
+
+            if (closedIssues.size === 0) {
+              console.log('No issues to close');
+            }

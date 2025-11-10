@@ -1,11 +1,14 @@
 """Gymnasium-compatible RL environment for scRNA-seq cluster refinement."""
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from anndata import AnnData
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+import scanpy as sc
+
+from .state import StateExtractor
 
 
 class ClusteringEnv(gym.Env):
@@ -20,6 +23,9 @@ class ClusteringEnv(gym.Env):
     ----------
     adata : AnnData
         Annotated data object containing single-cell data
+    gene_sets : dict, optional
+        Dictionary mapping gene set names to lists of gene names
+        (default: None, which uses empty gene sets)
     max_steps : int, optional
         Maximum number of steps per episode (default: 15)
     normalize_state : bool, optional
@@ -35,6 +41,7 @@ class ClusteringEnv(gym.Env):
     def __init__(
         self,
         adata: AnnData,
+        gene_sets: Optional[Dict[str, List[str]]] = None,
         max_steps: int = 15,
         normalize_state: bool = False,
         normalize_rewards: bool = False,
@@ -43,11 +50,17 @@ class ClusteringEnv(gym.Env):
         super().__init__()
 
         # Store parameters
-        self.adata = adata
+        self.adata = adata.copy()  # Make a copy to avoid modifying original
+        self.gene_sets = gene_sets or {}
         self.max_steps = max_steps
         self.normalize_state = normalize_state
         self.normalize_rewards = normalize_rewards
         self.render_mode = render_mode
+
+        # Initialize state extractor
+        self.state_extractor = StateExtractor(
+            self.adata, self.gene_sets, normalize=self.normalize_state
+        )
 
         # Action space: 5 discrete actions
         # 0: Split worst cluster
@@ -66,6 +79,7 @@ class ClusteringEnv(gym.Env):
         self.current_step = 0
         self.state: Optional[np.ndarray] = None
         self.current_resolution = 0.5  # Initial Leiden resolution
+        self._initial_clustering_done = False
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
@@ -89,18 +103,46 @@ class ClusteringEnv(gym.Env):
         """
         super().reset(seed=seed)
 
-        # Placeholder: return zero vector
-        # Will be replaced with actual state extraction in Stage 2
-        self.state = np.zeros(35, dtype=np.float64)
-
         # Reset episode tracking
         self.current_step = 0
         self.current_resolution = 0.5
 
+        # Perform initial clustering if not already done or if we need to reset
+        # Check if neighbors graph exists, if not compute it
+        if "neighbors" not in self.adata.uns:
+            # Compute neighbors graph if not present
+            if "X_scvi" in self.adata.obsm:
+                sc.pp.neighbors(self.adata, use_rep="X_scvi", n_neighbors=15)
+            else:
+                # Use PCA if no embeddings
+                if "X_pca" not in self.adata.obsm:
+                    sc.pp.pca(self.adata)
+                sc.pp.neighbors(self.adata, n_neighbors=15)
+
+        # Perform initial Leiden clustering
+        # Use igraph flavor for future compatibility
+        sc.tl.leiden(
+            self.adata,
+            resolution=self.current_resolution,
+            key_added="clusters",
+            flavor="igraph",
+            n_iterations=2,
+            directed=False,
+        )
+        self._initial_clustering_done = True
+
+        # Extract state using StateExtractor
+        self.state = self.state_extractor.extract_state(
+            self.adata, self.current_step, self.max_steps
+        )
+
+        # Get number of clusters for info
+        n_clusters = len(self.adata.obs["clusters"].unique())
+
         info = {
             "step": self.current_step,
             "resolution": self.current_resolution,
-            "n_clusters": 1,  # Placeholder
+            "n_clusters": n_clusters,
         }
 
         return self.state, info
@@ -131,21 +173,30 @@ class ClusteringEnv(gym.Env):
         if not self.action_space.contains(action):
             raise ValueError(f"Invalid action: {action}. Must be in range [0, 4].")
 
-        # Placeholder: no-op actions
-        # State remains unchanged
-        # Will be replaced with actual action execution in Stage 3
-        next_state = self.state.copy()
-
-        # Placeholder: constant reward
-        # Will be replaced with actual reward computation in Stage 4
-        reward = 0.0
+        # Placeholder: no-op actions for now (will be implemented in Stage 3)
+        # For Stage 2, we just extract the state after the (non-)action
+        # This allows us to test state extraction without action implementation
 
         # Increment step counter
         self.current_step += 1
 
+        # Extract new state
+        next_state = self.state_extractor.extract_state(
+            self.adata, self.current_step, self.max_steps
+        )
+        self.state = next_state
+
+        # Placeholder: constant reward (will be implemented in Stage 4)
+        reward = 0.0
+
         # Check termination conditions
         terminated = action == 4  # Accept action
         truncated = self.current_step >= self.max_steps
+
+        # Get number of clusters for info
+        n_clusters = (
+            len(self.adata.obs["clusters"].unique()) if "clusters" in self.adata.obs else 0
+        )
 
         info = {
             "action": action,
@@ -153,6 +204,7 @@ class ClusteringEnv(gym.Env):
             "terminated": terminated,
             "truncated": truncated,
             "resolution": self.current_resolution,
+            "n_clusters": n_clusters,
         }
 
         return next_state, reward, terminated, truncated, info

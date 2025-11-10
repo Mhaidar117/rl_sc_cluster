@@ -94,7 +94,7 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Project Proposal: project_proposal_v2.md
-  
+
   - RL Environment:
     - Overview: environment/README.md
     - Development Plan: environment/development_plan.md
@@ -102,19 +102,21 @@ nav:
     - State Representation: environment/state_representation.md
     - Action Implementation: environment/action_implementation.md
     - Reward Calculation: environment/reward_calculation.md
-  
+
   - API Reference:
     - Environment: api/environment.md
-  
+
   - Development:
     - Setup Guide: dev/setup.md
     - Contributing: dev/contributing.md
     - Testing: dev/testing.md
     - Code Style: dev/code_style.md
-  
+
   - About:
     - License: about/license.md
     - Changelog: about/changelog.md
+    - Stage 2 Complete: about/STAGE2_COMPLETE.md
+    - Documentation Updates: about/DOCUMENTATION_UPDATES.md
 
 # Extra
 extra:

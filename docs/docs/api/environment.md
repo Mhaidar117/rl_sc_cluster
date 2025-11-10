@@ -136,7 +136,7 @@ Execute one step in the environment.
 
 Render the environment (stub for future visualization).
 
-**Returns:** None (Stage 1 placeholder)
+**Returns:** None (visualization not yet implemented)
 
 ### `close()`
 
@@ -213,29 +213,29 @@ for episode in range(10):
     state, info = env.reset()
     done = False
     episode_reward = 0
-    
+
     while not done:
         action = env.action_space.sample()
         state, reward, terminated, truncated, info = env.step(action)
         episode_reward += reward
         done = terminated or truncated
-    
+
     print(f"Episode {episode}: reward={episode_reward}")
 ```
 
-## Stage 1 Limitations
+## Current Implementation Status
 
-Current Stage 1 implementation has placeholders:
+**Stage 2 Complete**:
+- ✅ **State**: Real 35-dimensional state vector computed from clustering metrics
+- 🔲 **Actions**: No-op placeholders (will modify clustering in Stage 3)
+- 🔲 **Reward**: Returns 0.0 placeholder (will compute composite reward in Stage 4)
 
-- **State**: Returns zeros (will be real metrics in Stage 2)
-- **Actions**: No-op (will modify clustering in Stage 3)
-- **Reward**: Returns 0.0 (will compute composite reward in Stage 4)
-
-These will be implemented in subsequent stages.
+**Next Steps**:
+- Stage 3: Implement actions (split, merge, re-cluster)
+- Stage 4: Implement composite reward function
 
 ## See Also
 
 - [Development Plan](../environment/development_plan.md) - Full implementation roadmap
 - [Design Decisions](../environment/design_decisions.md) - Rationale for key choices
 - [Testing Guide](../dev/testing.md) - How to test the environment
-

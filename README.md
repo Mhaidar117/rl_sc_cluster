@@ -40,24 +40,36 @@ from rl_sc_cluster_utils.environment import ClusteringEnv
 
 # Create environment with your scRNA-seq data
 adata = AnnData(X=np.random.randn(100, 50))
-env = ClusteringEnv(adata, max_steps=15)
+adata.obsm['X_scvi'] = np.random.randn(100, 10)  # scVI embeddings
+
+# Define gene sets for GAG enrichment
+gene_sets = {
+    'CS_biosynthesis': ['gene_0', 'gene_1'],
+    'HS_sulfation': ['gene_2', 'gene_3'],
+}
+
+# Create environment
+env = ClusteringEnv(adata, gene_sets=gene_sets, max_steps=15)
 
 # Use the environment
-state, info = env.reset()
+state, info = env.reset()  # Performs Leiden clustering, extracts state
 state, reward, terminated, truncated, info = env.step(0)
+print(f"State shape: {state.shape}")  # (35,)
+print(f"Clusters: {info['n_clusters']}")
 ```
 
 ## Project Status
 
-**Current Stage:** Stage 1 Complete ✅
+**Current Stage:** Stage 2 Complete ✅
 
-- ✅ Minimal Gymnasium environment
-- ✅ 35-dimensional state space
-- ✅ 5 discrete actions
-- ✅ Comprehensive test suite (20 tests)
+- ✅ Gymnasium-compatible environment
+- ✅ 35-dimensional state extraction (fully implemented)
+- ✅ Real-time state computation from clustering
+- ✅ 5 discrete actions (placeholders for Stage 3)
+- ✅ Comprehensive test suite (46 tests, all passing)
 - ✅ Complete documentation
 
-**Next:** Stage 2 - State Representation
+**Next:** Stage 3 - Action Implementation
 
 See [Development Plan](docs/docs/environment/development_plan.md) for full roadmap.
 

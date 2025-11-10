@@ -20,13 +20,18 @@ dependencies = [
     "black",
     "flake8",
     "gymnasium>=0.29.0",
+    "igraph>=0.10.0",
     "isort",
+    "leidenalg>=0.9.0",
     "mkdocs",
     "numpy>=1.24.0",
     "pip",
     "pre-commit",
     "pytest",
     "python-dotenv",
+    "scanpy>=1.9.0",
+    "scikit-learn>=1.3.0",
+    "scipy>=1.11.0",
     "tqdm",
     "typer",
 ]
@@ -65,5 +70,3 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 exclude = ["tests/"]
-
-

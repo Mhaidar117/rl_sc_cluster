@@ -273,26 +273,26 @@ from rl_sc_cluster_utils.environment.utils import validate_adata
 ```python
 class MyClass:
     """Class docstring."""
-    
+
     # Class variables
     class_var = 42
-    
+
     def __init__(self, param):
         """Initialize."""
         # Instance variables
         self.param = param
         self._private_var = None
-    
+
     # Public methods
     def public_method(self):
         """Public method."""
         pass
-    
+
     # Private methods
     def _private_method(self):
         """Private method."""
         pass
-    
+
     # Special methods
     def __str__(self):
         """String representation."""
@@ -382,7 +382,7 @@ def compute_reward(adata: AnnData, alpha: float, beta: float) -> float:
         raise ValueError(f"alpha must be in [0, 1], got {alpha}")
     if not 0 <= beta <= 1:
         raise ValueError(f"beta must be in [0, 1], got {beta}")
-    
+
     # Compute reward
     ...
 ```
@@ -400,10 +400,10 @@ def test_reset_returns_correct_state_shape(env):
     """Test that reset returns state with correct shape."""
     # Arrange
     expected_shape = (35,)
-    
+
     # Act
     state, info = env.reset()
-    
+
     # Assert
     assert state.shape == expected_shape
 ```
@@ -561,4 +561,3 @@ flake8 --statistics rl_sc_cluster_utils/
 - [isort](https://pycqa.github.io/isort/) - Import Sorter
 - [flake8](https://flake8.pycqa.org/) - Linter
 - [NumPy Docstring Guide](https://numpydoc.readthedocs.io/) - Docstring Style
-

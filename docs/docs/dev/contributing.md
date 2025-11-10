@@ -259,14 +259,15 @@ Documentation contributions are always welcome!
 
 ## Development Stages
 
-### Current: Stage 1 (Complete)
-- Minimal Gymnasium environment
-- Placeholder implementations
-- Basic tests
+### Current: Stage 2 (Complete)
+- Gymnasium-compatible environment
+- Real 35-dimensional state extraction
+- StateExtractor class with full metrics
+- 46 comprehensive tests passing
 
-### Next: Stage 2
-- Real state extraction
-- Caching system
+### Next: Stage 3
+- Action implementations (split, merge, re-cluster)
+- Resolution bounds handling
 - Validation
 
 See [Development Plan](../environment/development_plan.md) for details.
@@ -310,4 +311,3 @@ By contributing, you agree that your contributions will be licensed under the BS
 Don't hesitate to ask! Open an issue or discussion if you're unsure about anything.
 
 Thank you for contributing to RLscCluster! 🎉
-

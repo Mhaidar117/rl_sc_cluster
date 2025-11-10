@@ -34,10 +34,10 @@ Identify the cluster with lowest quality (worst silhouette) and split it into su
            if cluster_mask.sum() < 2:
                continue  # Skip singletons
            cluster_embeddings = adata.obsm['X_scvi'][cluster_mask]
-           sil = silhouette_score(cluster_embeddings, 
+           sil = silhouette_score(cluster_embeddings,
                                   adata.obs['clusters'][cluster_mask])
            cluster_silhouettes[cluster_id] = sil
-       
+
        worst_cluster = min(cluster_silhouettes, key=cluster_silhouettes.get)
        return worst_cluster
    ```
@@ -48,13 +48,13 @@ Identify the cluster with lowest quality (worst silhouette) and split it into su
        """Extract k-NN subgraph for a cluster."""
        cluster_mask = adata.obs['clusters'] == cluster_id
        cluster_cells = adata.obs_names[cluster_mask]
-       
+
        # Get neighbors graph (sparse matrix)
        neighbors = adata.uns['neighbors']['connectivities']
-       
+
        # Extract subgraph (cells in cluster)
        subgraph = neighbors[cluster_mask, :][:, cluster_mask]
-       
+
        return subgraph, cluster_mask
    ```
 
@@ -63,14 +63,14 @@ Identify the cluster with lowest quality (worst silhouette) and split it into su
    def subcluster(adata, cluster_id, resolution):
        """Run Leiden on cluster subgraph."""
        subgraph, cluster_mask = extract_cluster_subgraph(adata, cluster_id)
-       
+
        # Create temporary AnnData for sub-clustering
        cluster_adata = adata[cluster_mask].copy()
        cluster_adata.uns['neighbors'] = {'connectivities': subgraph}
-       
+
        # Run Leiden at higher resolution
        sc.tl.leiden(cluster_adata, resolution=resolution, key_added='subclusters')
-       
+
        # Map sub-clusters back to original cluster
        new_labels = cluster_adata.obs['subclusters'].values
        return new_labels, cluster_mask
@@ -82,10 +82,10 @@ Identify the cluster with lowest quality (worst silhouette) and split it into su
        """Replace cluster with new sub-clusters."""
        # Get current max cluster ID
        max_cluster_id = adata.obs['clusters'].max()
-       
+
        # Assign new cluster IDs
        new_cluster_ids = new_labels + max_cluster_id + 1
-       
+
        # Update labels
        adata.obs.loc[cluster_mask, 'clusters'] = new_cluster_ids
    ```
@@ -128,7 +128,7 @@ Find the two clusters with minimum centroid distance and merge them.
        """Find pair of clusters with minimum distance."""
        min_dist = np.inf
          closest_pair = None
-       
+
        cluster_ids = list(centroids.keys())
        for i, c1 in enumerate(cluster_ids):
            for c2 in cluster_ids[i+1:]:
@@ -136,7 +136,7 @@ Find the two clusters with minimum centroid distance and merge them.
                if dist < min_dist:
                    min_dist = dist
                    closest_pair = (c1, c2)
-       
+
        return closest_pair
    ```
 
@@ -146,11 +146,11 @@ Find the two clusters with minimum centroid distance and merge them.
        """Merge two clusters into one."""
        # Use smaller cluster ID as new label
        new_label = min(cluster1, cluster2)
-       
+
        # Update labels
        mask1 = adata.obs['clusters'] == cluster1
        mask2 = adata.obs['clusters'] == cluster2
-       
+
        adata.obs.loc[mask1, 'clusters'] = new_label
        adata.obs.loc[mask2, 'clusters'] = new_label
    ```
@@ -178,7 +178,7 @@ Increase clustering resolution by 0.1 and re-run Leiden on full graph.
    def increment_resolution(current_resolution, max_resolution=2.0):
        """Increment resolution with clamping."""
        new_resolution = min(max_resolution, current_resolution + 0.1)
-       clamped = (new_resolution == max_resolution and 
+       clamped = (new_resolution == max_resolution and
                   current_resolution < max_resolution)
        return new_resolution, clamped
    ```
@@ -215,7 +215,7 @@ Decrease clustering resolution by 0.1 and re-run Leiden on full graph.
    def decrement_resolution(current_resolution, min_resolution=0.1):
        """Decrement resolution with clamping."""
        new_resolution = max(min_resolution, current_resolution - 0.1)
-       clamped = (new_resolution == min_resolution and 
+       clamped = (new_resolution == min_resolution and
                   current_resolution > min_resolution)
        return new_resolution, clamped
    ```
@@ -256,25 +256,25 @@ def accept_action():
 def validate_action(adata, action, current_resolution):
     """Validate action is legal."""
     n_clusters = len(adata.obs['clusters'].unique())
-    
+
     if action == 0:  # Split
         if n_clusters == 1:
             return False, "Cannot split: only 1 cluster"
         # Check for non-singleton clusters
         ...
-    
+
     elif action == 1:  # Merge
         if n_clusters == 1:
             return False, "Cannot merge: only 1 cluster"
-    
+
     elif action == 2:  # Increase resolution
         if current_resolution >= 2.0:
             return False, "Already at max resolution"
-    
+
     elif action == 3:  # Decrease resolution
         if current_resolution <= 0.1:
             return False, "Already at min resolution"
-    
+
     return True, None
 ```
 
@@ -285,10 +285,10 @@ def validate_clustering(adata):
     """Validate clustering is still valid after action."""
     # Check all cells have cluster labels
     assert adata.obs['clusters'].notna().all()
-    
+
     # Check at least 1 cluster exists
     assert len(adata.obs['clusters'].unique()) >= 1
-    
+
     # Check no negative cluster IDs
     assert (adata.obs['clusters'] >= 0).all()
 ```
@@ -300,13 +300,13 @@ def validate_clustering(adata):
 ```python
 def execute_action(adata, action, current_resolution):
     """Execute action and return new state."""
-    
+
     # Validate action
     is_valid, error_msg = validate_action(adata, action, current_resolution)
     if not is_valid:
         # Return same state, negative reward
         return adata, current_resolution, -1.0, error_msg
-    
+
     # Execute action
     if action == 0:
         adata, new_resolution = split_worst_cluster(adata, current_resolution)
@@ -319,10 +319,10 @@ def execute_action(adata, action, current_resolution):
     elif action == 4:
         # Accept - no changes
         new_resolution = current_resolution
-    
+
     # Validate result
     validate_clustering(adata)
-    
+
     return adata, new_resolution, None, None
 ```
 
@@ -342,6 +342,5 @@ def execute_action(adata, action, current_resolution):
 
 ---
 
-**Document Version**: 1.0  
+**Document Version**: 1.0
 **Last Updated**: 2025-01-XX
-

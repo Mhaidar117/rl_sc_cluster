@@ -157,23 +157,23 @@ For each gene set, compute per-cell enrichment scores:
 def compute_aucell_scores(adata, gene_set):
     """
     Compute AUCell enrichment scores for a gene set.
-    
+
     AUCell: Area Under the Curve of gene expression ranking
     Higher score = cell expresses more genes in the set
     """
     # Get expression matrix (log-normalized)
     expr = adata.X  # or adata.layers['log_normalized']
-    
+
     # Get gene indices for gene set
     gene_indices = [adata.var_names.get_loc(gene) for gene in gene_set]
-    
+
     # Rank genes per cell (higher expression = higher rank)
     ranks = np.argsort(expr[:, gene_indices], axis=1)
-    
+
     # Compute AUC: proportion of gene set genes in top-k
     # (Simplified - actual AUCell is more complex)
     aucell_scores = np.mean(ranks, axis=1)
-    
+
     return aucell_scores
 ```
 
@@ -258,6 +258,5 @@ def validate_state(state):
 
 ---
 
-**Document Version**: 1.0  
+**Document Version**: 1.0
 **Last Updated**: 2025-01-XX
-

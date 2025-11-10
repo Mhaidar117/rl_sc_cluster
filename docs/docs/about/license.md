@@ -4,7 +4,7 @@ RLscCluster is licensed under the BSD 3-Clause License.
 
 ## BSD 3-Clause License
 
-Copyright (c) 2025, Michael Haidar & Shivam Tyagi  
+Copyright (c) 2025, Michael Haidar & Shivam Tyagi
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
@@ -57,4 +57,3 @@ This project uses the following open-source packages:
 By contributing to this project, you agree that your contributions will be licensed under the BSD 3-Clause License.
 
 See [Contributing Guide](../dev/contributing.md) for more information.
-

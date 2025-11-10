@@ -7,12 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Stage 2 (Planned)
-- State extraction implementation
-- Real 35-dimensional state vector
-- Caching system for performance
-- AnnData validation
-
 ### Stage 3 (Planned)
 - Action implementations (split, merge, re-cluster)
 - Resolution bounds handling
@@ -32,6 +26,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive testing
 - Documentation completion
 - Production readiness
+
+## [0.0.2] - 2025-11-10
+
+### Added - Stage 2 Complete
+- State extraction implementation (`StateExtractor` class)
+- Real 35-dimensional state vector computation
+- Global metrics (3 dims): cluster count, mean size, entropy
+- Quality metrics (3 dims): silhouette, modularity, balance
+- GAG enrichment (28 dims): 7 gene sets × 4 metrics each
+- Progress tracking (1 dim): normalized episode progress
+- Optional state normalization
+- Caching system for embeddings and graph structure
+- Automatic neighbors graph computation
+- Future-proof Leiden clustering (igraph flavor)
+- Comprehensive state extraction tests (24 tests)
+- Updated environment tests (22 tests)
+- Total: 46 tests passing
+
+### Dependencies Added
+- scikit-learn>=1.3.0 (silhouette score, mutual information)
+- scanpy>=1.9.0 (Leiden clustering, modularity)
+- scipy>=1.11.0 (ANOVA F-statistic, entropy)
+- igraph>=0.10.0 (graph operations)
+- leidenalg>=0.9.0 (Leiden clustering)
+
+### Changed
+- State vector now computed from real clustering metrics (no longer zeros)
+- Environment performs initial Leiden clustering on reset
+- Added `gene_sets` parameter to `ClusteringEnv`
+- Updated Leiden clustering to use igraph flavor for future compatibility
+
+### Fixed
+- Eliminated 19 Leiden backend deprecation warnings
+- Fixed observation space warnings (2 remain, expected)
 
 ## [0.0.1] - 2025-01-10
 
@@ -123,13 +151,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.0.2** (2025-11-10): Stage 2 Complete - State Representation
 - **0.0.1** (2025-01-10): Stage 1 Complete - Minimal Gymnasium Environment
 - **0.0.0** (2025-01-09): Initial Setup
 
 ## Upcoming Releases
 
 ### v0.1.0 (Planned)
-- Stage 2: State Representation
 - Stage 3: Action Implementation
 - Stage 4: Reward Calculation
 
@@ -150,4 +178,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [GitHub Repository](https://github.com/yourusername/rl_sc_cluster)
 - [Documentation](https://yourusername.github.io/rl_sc_cluster)
 - [Issue Tracker](https://github.com/yourusername/rl_sc_cluster/issues)
-

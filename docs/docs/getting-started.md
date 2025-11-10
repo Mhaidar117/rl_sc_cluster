@@ -55,18 +55,27 @@ n_cells = 100
 n_genes = 50
 X = np.random.randn(n_cells, n_genes)
 adata = AnnData(X=X)
+adata.obsm['X_scvi'] = np.random.randn(n_cells, 10)  # scVI embeddings
+
+# Optional: Define gene sets for GAG enrichment
+gene_sets = {
+    'CS_biosynthesis': ['gene_0', 'gene_1', 'gene_2'],
+    'HS_sulfation': ['gene_3', 'gene_4', 'gene_5'],
+}
 
 # Create environment
-env = ClusteringEnv(adata, max_steps=15)
+env = ClusteringEnv(adata, gene_sets=gene_sets, max_steps=15)
 
-# Reset environment
+# Reset environment (performs Leiden clustering)
 state, info = env.reset()
-print(f"Initial state shape: {state.shape}")
-print(f"Info: {info}")
+print(f"Initial state shape: {state.shape}")  # (35,)
+print(f"Number of clusters: {info['n_clusters']}")
+print(f"State is not zeros: {not np.all(state == 0)}")  # True
 
 # Take an action
-action = 0  # Split worst cluster
+action = 0  # Split worst cluster (placeholder in Stage 2)
 state, reward, terminated, truncated, info = env.step(action)
+print(f"Progress: {state[34]}")  # 1/15 = 0.0667
 print(f"Reward: {reward}")
 print(f"Terminated: {terminated}")
 ```

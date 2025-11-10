@@ -187,12 +187,12 @@ self._cached_reward = None
 def get_action_mask(self):
     """Return mask for valid actions."""
     mask = np.ones(5, dtype=bool)
-    
+
     if self.current_resolution >= 2.0:
         mask[2] = False  # Can't increase resolution
     if self.current_resolution <= 0.1:
         mask[3] = False  # Can't decrease resolution
-    
+
     return mask
 ```
 
@@ -242,6 +242,5 @@ def compute_validation_metrics(adata, gene_sets):
 
 ---
 
-**Document Version**: 1.0  
+**Document Version**: 1.0
 **Last Updated**: 2025-01-XX
-

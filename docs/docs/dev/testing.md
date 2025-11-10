@@ -136,10 +136,10 @@ def test_feature(env):
     """Test description."""
     # Arrange
     expected = ...
-    
+
     # Act
     result = env.some_method()
-    
+
     # Assert
     assert result == expected
 ```
@@ -256,7 +256,7 @@ def mock_adata():
     """Create minimal mock AnnData."""
     import numpy as np
     from anndata import AnnData
-    
+
     n_obs = 100
     n_vars = 50
     X = np.random.randn(n_obs, n_vars)
@@ -488,4 +488,3 @@ export PYTHONPATH=/path/to/project:$PYTHONPATH
 - Review [Code Style Guide](code_style.md)
 - Check [API Reference](../api/environment.md)
 - Read [Contributing Guide](contributing.md)
-

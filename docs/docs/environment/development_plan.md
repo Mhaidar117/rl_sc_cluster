@@ -1,8 +1,8 @@
 # RL Environment Development Plan
 
-**Project**: RL-Guided Refinement of scRNA-seq Clustering  
-**Component**: Gymnasium-Compatible RL Environment  
-**Status**: Planning Phase → Stage 1 Implementation
+**Project**: RL-Guided Refinement of scRNA-seq Clustering
+**Component**: Gymnasium-Compatible RL Environment
+**Status**: Stage 2 Complete → Stage 3 Implementation
 
 ---
 
@@ -111,14 +111,14 @@ from anndata import AnnData
 class ClusteringEnv(gym.Env):
     """
     Gymnasium-compatible RL environment for scRNA-seq cluster refinement.
-    
+
     State: 35-dimensional vector encoding clustering state
     Actions: 5 discrete actions (split, merge, re-cluster, accept)
     Reward: Composite of clustering quality and GAG enrichment
     """
-    
+
     metadata = {'render_modes': ['human', 'rgb_array']}
-    
+
     def __init__(
         self,
         adata: AnnData,
@@ -128,17 +128,17 @@ class ClusteringEnv(gym.Env):
         render_mode: Optional[str] = None
     ):
         super().__init__()
-        
+
         # Store parameters
         self.adata = adata
         self.max_steps = max_steps
         self.normalize_state = normalize_state
         self.normalize_rewards = normalize_rewards
         self.render_mode = render_mode
-        
+
         # Action space: 5 discrete actions
         self.action_space = gym.spaces.Discrete(5)
-        
+
         # Observation space: 35-dimensional vector
         self.observation_space = gym.spaces.Box(
             low=-np.inf,
@@ -146,12 +146,12 @@ class ClusteringEnv(gym.Env):
             shape=(35,),
             dtype=np.float64
         )
-        
+
         # Episode tracking
         self.current_step = 0
         self.state = None
         self.current_resolution = 0.5  # Initial Leiden resolution
-        
+
     def reset(
         self,
         seed: Optional[int] = None,
@@ -159,54 +159,54 @@ class ClusteringEnv(gym.Env):
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
         """Reset environment to initial state."""
         super().reset(seed=seed)
-        
+
         # Placeholder: return zero vector
         self.state = np.zeros(35, dtype=np.float64)
-        
+
         # Reset episode tracking
         self.current_step = 0
         self.current_resolution = 0.5
-        
+
         info = {
             'step': self.current_step,
             'resolution': self.current_resolution,
             'n_clusters': 1  # Placeholder
         }
-        
+
         return self.state, info
-    
+
     def step(
         self,
         action: int
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Execute one step in the environment."""
-        
+
         # Validate action
         assert self.action_space.contains(action), f"Invalid action: {action}"
-        
+
         # Placeholder: no-op actions
         # State remains unchanged
         next_state = self.state.copy()
-        
+
         # Placeholder: constant reward
         reward = 0.0
-        
+
         # Check termination conditions
         terminated = (action == 4)  # Accept action
         truncated = (self.current_step >= self.max_steps - 1)
-        
+
         # Increment step counter
         self.current_step += 1
-        
+
         info = {
             'action': action,
             'step': self.current_step,
             'terminated': terminated,
             'truncated': truncated
         }
-        
+
         return next_state, reward, terminated, truncated, info
-    
+
     def render(self) -> Optional[np.ndarray]:
         """Render the environment (stub for future visualization)."""
         if self.render_mode == 'human':
@@ -216,7 +216,7 @@ class ClusteringEnv(gym.Env):
             # Future: Return RGB array for video recording
             return None
         return None
-    
+
     def close(self) -> None:
         """Clean up resources."""
         # Nothing to clean up yet
@@ -231,7 +231,7 @@ class ClusteringEnv(gym.Env):
 def validate_adata(adata: AnnData) -> None:
     """
     Validate AnnData object has required fields.
-    
+
     Required:
     - .obsm['X_scvi']: Embedding matrix
     - .uns['neighbors']: k-NN graph
@@ -308,20 +308,20 @@ class StateExtractor:
     def __init__(self, adata, gene_sets, normalize=False):
         # Initialize caches
         # Store embeddings, graph, gene sets
-        
+
     def extract_state(self, adata, step, max_steps):
         # Compute all 35 dimensions
         # Use caches where possible
-        
+
     def _compute_global_metrics(self, adata):
         # n_clusters, mean_size, entropy
-        
+
     def _compute_quality_metrics(self, adata):
         # silhouette, modularity, balance
-        
+
     def _compute_gag_enrichment(self, adata, gene_sets):
         # For each gene set: mean, max, F-stat, MI
-        
+
     def _normalize_state(self, state):
         # Optional min-max normalization
 ```
@@ -393,19 +393,19 @@ Implement the 5 discrete actions: split, merge, re-cluster, and accept.
 class ActionExecutor:
     def __init__(self, adata, min_resolution=0.1, max_resolution=2.0):
         # Store parameters
-        
+
     def execute(self, action, current_resolution):
         # Route to appropriate action method
-        
+
     def _split_worst_cluster(self, adata, resolution):
         # Find worst cluster, sub-cluster, update labels
-        
+
     def _merge_closest_pair(self, adata):
         # Find closest centroids, merge, update labels
-        
+
     def _recluster(self, adata, resolution_delta):
         # Update resolution, clamp, run Leiden
-        
+
     def _clamp_resolution(self, resolution):
         # Clamp and return penalty flag
 ```
@@ -489,7 +489,7 @@ class RewardCalculator:
     ):
         # Store parameters
         # Initialize normalization stats if needed
-        
+
     def compute_reward(
         self,
         adata,
@@ -501,13 +501,13 @@ class RewardCalculator:
         # Compute penalties
         # Combine into composite reward
         # Normalize if enabled
-        
+
     def _compute_q_cluster(self, adata):
         # Silhouette, modularity, balance
-        
+
     def _compute_q_gag(self, adata, gene_sets):
         # ANOVA F-stat, mutual information
-        
+
     def _compute_penalties(
         self,
         adata,
@@ -569,12 +569,12 @@ class ClusteringEnv(gym.Env):
         # Initialize StateExtractor
         # Initialize ActionExecutor
         # Initialize RewardCalculator
-        
+
     def reset(self, ...):
         # Reset clustering to initial state
         # Extract initial state vector
         # Reset caches
-        
+
     def step(self, action):
         # Execute action (modify clustering)
         # Extract new state
@@ -715,7 +715,6 @@ Comprehensive testing at unit, integration, and system levels.
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2025-01-XX  
-**Status**: Planning Complete → Ready for Stage 1 Implementation
-
+**Document Version**: 1.1
+**Last Updated**: 2025-11-10
+**Status**: Stage 2 Complete → Ready for Stage 3 Implementation
