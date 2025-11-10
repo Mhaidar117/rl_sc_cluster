@@ -1,64 +1,206 @@
 # RLscCluster
 
-This repository is currently under development. If you are interested in how RL can be used for scRNA-seq cluster refinement, please come back in a couple weeks.
+**Reinforcement Learning for scRNA-seq Clustering with GAG-Sulfation-aware Refinement**
 
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
+[![Gymnasium](https://img.shields.io/badge/Gymnasium-0.29+-green.svg)](https://gymnasium.farama.org/)
 
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
-    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
+A novel approach to single-cell RNA sequencing (scRNA-seq) cluster refinement using reinforcement learning. This project integrates domain-specific biological knowledge—specifically, glycosaminoglycan (GAG) sulfation pathway expression signatures—to guide the discovery of biologically meaningful cell subtypes.
 
-RL for scRNA-sq clustering with GAG-Sulfation-aware refinement
+## Overview
 
-## Project Organization
+RLscCluster provides the first Gymnasium-compatible RL environment for scRNA-seq clustering, enabling:
 
-```
-├── LICENSE            <- Open-source license 
-├── Makefile           <- Makefile 
-├── README.md          <- The top-level README for developers using this project.
-├── data
-│   ├── external       <- Data from third party sources.
-│   ├── interim        <- Intermediate data that has been transformed.
-│   ├── processed      <- The final, canonical data sets for modeling.
-│   └── raw            <- The original, immutable data dump.
-│
-├── docs               <- A default mkdocs project; see www.mkdocs.org for details
-│
-├── models             <- Trained and serialized models, model predictions, or model summaries
-│
-├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-│                         the creator's initials, and a short `-` delimited description, e.g.
-│                         `1.0-jqp-initial-data-exploration`.
-│
-├── pyproject.toml     <- Project configuration file with package metadata for 
-│                         rl_sc_cluster_utils and configuration for tools like black
-│
-├── references         <- Data dictionaries, manuals, and all other explanatory materials.
-│
-├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
-│   └── figures        <- Generated graphics and figures to be used in reporting
-│
-├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
-│                         generated with `pip freeze > requirements.txt`
-│
-├── setup.cfg          <- Configuration file for flake8
-│
-└── rl_sc_cluster_utils   <- Source code for use in this project.
-    │
-    ├── __init__.py             <- Makes rl_sc_cluster_utils a Python module
-    │
-    ├── config.py               <- Store useful variables and configuration
-    │
-    ├── dataset.py              <- Scripts to download or generate data
-    │
-    ├── features.py             <- Code to create features for modeling
-    │
-    ├── modeling                
-    │   ├── __init__.py 
-    │   ├── predict.py          <- Code to run model inference with trained models          
-    │   └── train.py            <- Code to train models
-    │
-    └── plots.py                <- Code to create visualizations
+- **Biology-Aware Clustering**: Balances clustering quality with GAG-sulfation pathway coherence
+- **Adaptive Refinement**: Sequential decision-making over clustering operations (split, merge, re-cluster)
+- **Interpretable Actions**: Clear mapping between RL actions and clustering operations
+- **Extensible Framework**: Easily adaptable to other gene programs and cell types
+
+## Quick Start
+
+### Installation
+
+```bash
+# Clone repository
+git clone https://github.com/yourusername/rl_sc_cluster.git
+cd rl_sc_cluster
+
+# Create virtual environment and install dependencies
+make venv
+source venv/bin/activate
 ```
 
---------
+### Basic Usage
 
+```python
+from anndata import AnnData
+import numpy as np
+from rl_sc_cluster_utils.environment import ClusteringEnv
+
+# Create environment with your scRNA-seq data
+adata = AnnData(X=np.random.randn(100, 50))
+env = ClusteringEnv(adata, max_steps=15)
+
+# Use the environment
+state, info = env.reset()
+state, reward, terminated, truncated, info = env.step(0)
+```
+
+## Project Status
+
+**Current Stage:** Stage 1 Complete ✅
+
+- ✅ Minimal Gymnasium environment
+- ✅ 35-dimensional state space
+- ✅ 5 discrete actions
+- ✅ Comprehensive test suite (20 tests)
+- ✅ Complete documentation
+
+**Next:** Stage 2 - State Representation
+
+See [Development Plan](docs/docs/environment/development_plan.md) for full roadmap.
+
+## Documentation
+
+📚 **Full documentation available at:** [Documentation Site](https://yourusername.github.io/rl_sc_cluster)
+
+- [Getting Started](docs/docs/getting-started.md)
+- [Development Plan](docs/docs/environment/development_plan.md)
+- [API Reference](docs/docs/api/environment.md)
+- [Contributing Guide](docs/docs/dev/contributing.md)
+
+Build and serve documentation locally:
+```bash
+make docs-serve  # Visit http://localhost:8000
+```
+
+## Development
+
+### Setup
+
+```bash
+make venv          # Create virtual environment
+source venv/bin/activate
+```
+
+### Testing
+
+```bash
+make test          # Run all tests
+make test-env      # Run environment tests
+make test-cov      # Run with coverage
+```
+
+### Code Quality
+
+```bash
+make lint          # Check code quality
+make format        # Format code
+```
+
+### Documentation
+
+```bash
+make docs          # Build documentation
+make docs-serve    # Serve locally
+make docs-deploy   # Deploy to GitHub Pages
+```
+
+## Project Structure
+
+```
+rl_sc_cluster/
+├── rl_sc_cluster_utils/      # Main package
+│   ├── environment/           # RL environment
+│   ├── config.py              # Configuration
+│   ├── dataset.py             # Data processing
+│   ├── features.py            # Feature engineering
+│   ├── modeling/              # Model training/inference
+│   └── plots.py               # Visualization
+├── tests/                     # Test suite
+│   └── env_test/              # Environment tests
+├── docs/                      # Documentation (MkDocs)
+│   └── docs/                  # Markdown files
+├── notebooks/                 # Jupyter notebooks
+├── references/                # Reference materials
+├── reports/                   # Generated reports
+├── models/                    # Trained models
+├── data/                      # Data directory
+│   ├── raw/                   # Raw data
+│   ├── interim/               # Intermediate data
+│   ├── processed/             # Processed data
+│   └── external/              # External data
+├── venv/                      # Virtual environment
+├── requirements.txt           # Python dependencies
+├── pyproject.toml             # Package configuration
+├── Makefile                   # Build automation
+└── README.md                  # This file
+```
+
+## Key Features
+
+### State Space (35 dimensions)
+- **Global metrics** (3): Cluster count, size, entropy
+- **Quality metrics** (3): Silhouette, modularity, balance
+- **GAG enrichment** (28): 7 gene sets × 4 metrics each
+- **Progress** (1): Episode progress
+
+### Actions (5 discrete)
+- **0**: Split worst cluster
+- **1**: Merge closest pair
+- **2**: Re-cluster resolution +0.1
+- **3**: Re-cluster resolution -0.1
+- **4**: Accept (terminate)
+
+### Reward Function
+```
+R = α·Q_cluster + β·Q_GAG - δ·Penalty
+```
+
+## Research Context
+
+This project addresses critical gaps in scRNA-seq analysis:
+
+1. **Lack of Biology-Aware Refinement**: Standard clustering optimizes graph modularity without incorporating domain knowledge
+2. **No Principled Multi-Objective Optimization**: Balancing clustering quality and biological coherence requires systematic approach
+3. **Absence of RL Environments for Genomics**: No framework exists for sequential clustering decisions in scRNA-seq
+
+## Citation
+
+If you use RLscCluster in your research, please cite:
+
+```bibtex
+@software{rlsccluster2025,
+  title = {RLscCluster: Reinforcement Learning for scRNA-seq Clustering},
+  author = {Haidar, Michael and Tyagi, Shivam},
+  year = {2025},
+  url = {https://github.com/yourusername/rl_sc_cluster}
+}
+```
+
+## License
+
+BSD 3-Clause License. See [LICENSE](LICENSE) for details.
+
+## Authors
+
+- **Michael Haidar**
+- **Shivam Tyagi**
+
+## Acknowledgments
+
+Built using:
+- [Gymnasium](https://gymnasium.farama.org/) - RL environment framework
+- [Scanpy](https://scanpy.readthedocs.io/) - Single-cell analysis
+- [AnnData](https://anndata.readthedocs.io/) - Annotated data structures
+
+## Links
+
+- 📖 [Documentation](https://yourusername.github.io/rl_sc_cluster)
+- 🐛 [Issue Tracker](https://github.com/yourusername/rl_sc_cluster/issues)
+- 💬 [Discussions](https://github.com/yourusername/rl_sc_cluster/discussions)
+
+---
+
+**Note**: This repository is currently under active development. See [Development Plan](docs/docs/environment/development_plan.md) for current status and roadmap.

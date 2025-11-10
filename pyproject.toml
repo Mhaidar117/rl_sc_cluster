@@ -16,10 +16,13 @@ classifiers = [
     "License :: OSI Approved :: BSD License"
 ]
 dependencies = [
+    "anndata>=0.9.0",
     "black",
     "flake8",
+    "gymnasium>=0.29.0",
     "isort",
     "mkdocs",
+    "numpy>=1.24.0",
     "pip",
     "pre-commit",
     "pytest",
@@ -27,7 +30,7 @@ dependencies = [
     "tqdm",
     "typer",
 ]
-requires-python = "~=3.10.0"
+requires-python = "==3.12.4"
 
 [tool.black]
 line-length = 99

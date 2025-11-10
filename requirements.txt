@@ -1,0 +1,29 @@
+# Install the package in development mode
+-e .
+
+# Core dependencies for RL environment
+gymnasium>=0.29.0
+numpy>=1.24.0
+anndata>=0.9.0
+
+# Development dependencies
+black
+flake8
+isort
+pytest
+
+# Utilities
+python-dotenv
+tqdm
+typer
+loguru
+
+# Documentation
+mkdocs
+mkdocs-material
+mkdocstrings[python]
+pymdown-extensions
+
+# Pre-commit hooks
+pre-commit
+
