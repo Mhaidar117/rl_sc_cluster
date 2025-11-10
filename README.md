@@ -187,7 +187,7 @@ If you use RLscCluster in your research, please cite:
   title = {RLscCluster: Reinforcement Learning for scRNA-seq Clustering},
   author = {Haidar, Michael and Tyagi, Shivam},
   year = {2025},
-  url = {https://github.com/yourusername/rl_sc_cluster}
+  url = {https://github.com/mhaidar117/rl_sc_cluster}
 }
 ```
 
