@@ -1,5 +1,19 @@
-# Data
-/data/
+# Data - ignore data files and subdirectories but allow notebooks
+/data/raw/
+/data/processed/
+/data/interim/
+/data/external/
+/data/*.csv
+/data/*.parquet
+/data/*.h5ad
+/data/*.h5
+/data/*.sqlite
+/data/*.db
+/data/*.pkl
+/data/*.pickle
+/data/*.pdf
+# Allow notebooks in data folder
+!/data/*.ipynb
 
 # Mac OS-specific storage files
 .DS_Store
@@ -192,3 +206,5 @@ cython_debug/
 
 # Cursor files
 .cursor/
+# documents:
+docs/docs/Review of scRNA-seq data clustering.pdf
