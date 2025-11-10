@@ -1,4 +1,127 @@
 site_name: RLscCluster
-# 
+site_description: Reinforcement Learning for scRNA-seq Clustering with GAG-Sulfation-aware Refinement
 site_author: Michael Haidar & Shivam Tyagi
-# 
+site_url: https://github.com/yourusername/rl_sc_cluster
+
+# Repository
+repo_name: rl_sc_cluster
+repo_url: https://github.com/yourusername/rl_sc_cluster
+edit_uri: edit/main/docs/docs/
+
+# Copyright
+copyright: Copyright &copy; 2025 Michael Haidar & Shivam Tyagi
+
+# Configuration
+theme:
+  name: material
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+# Extensions
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.arithmatex:
+      generic: true
+  - tables
+  - footnotes
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+# Plugins
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: numpy
+            show_source: true
+
+# Extra JavaScript
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+# Page tree
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Project Proposal: project_proposal_v2.md
+
+  - RL Environment:
+    - Overview: environment/README.md
+    - Development Plan: environment/development_plan.md
+    - Design Decisions: environment/design_decisions.md
+    - State Representation: environment/state_representation.md
+    - Action Implementation: environment/action_implementation.md
+    - Reward Calculation: environment/reward_calculation.md
+
+  - API Reference:
+    - Environment: api/environment.md
+
+  - Development:
+    - Setup Guide: dev/setup.md
+    - Contributing: dev/contributing.md
+    - Testing: dev/testing.md
+    - Code Style: dev/code_style.md
+
+  - About:
+    - License: about/license.md
+    - Changelog: about/changelog.md
+    - Stage 2 Complete: about/STAGE2_COMPLETE.md
+    - Documentation Updates: about/DOCUMENTATION_UPDATES.md
+
+# Extra
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yourusername/rl_sc_cluster
+  version:
+    provider: mike

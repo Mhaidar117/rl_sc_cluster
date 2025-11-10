@@ -196,18 +196,18 @@ No existing RL environment captures the scRNA-seq clustering task. Creating this
   - `3`: Re-cluster all (resolution -0.1)
   - `4`: Accept (terminate episode)
 
-- **Reward Function**: 
+- **Reward Function**:
   ```
   R = α·Q_cluster + β·Q_GAG - δ·Penalty
-  
+
   Q_cluster = 0.5·silhouette + 0.3·modularity + 0.2·balance
   Q_GAG = ANOVA_F(GAG_scores ~ cluster) + MI(cluster, GAG_profile)
   Penalty = degenerate_states (too many/few clusters, singletons)
-  
+
   Weights: α=0.6, β=0.4, δ=1.0 (tunable)
   ```
 
-- **Episode Structure**: 
+- **Episode Structure**:
   - Reset: Start with simple Leiden clustering (resolution=0.5)
   - Max 15 steps per episode
   - Terminate on "Accept" action or max steps
@@ -220,9 +220,9 @@ No existing RL environment captures the scRNA-seq clustering task. Creating this
 
 #### Expected Outcomes
 
-✅ Functional RL environment passing `check_env()` validation  
-✅ Documentation and API for community use  
-✅ Benchmark dataset and baseline performance metrics  
+✅ Functional RL environment passing `check_env()` validation
+✅ Documentation and API for community use
+✅ Benchmark dataset and baseline performance metrics
 
 #### Potential Pitfalls
 
@@ -254,7 +254,7 @@ Demonstrates that RL can:
   - Chosen for sample efficiency and stability
   - Policy network: 2-layer MLP (256→128→actions)
   - Value network: Shared backbone + value head
-  
+
 - **Hyperparameters**:
   - Learning rate: 3e-4
   - Batch size: 64
@@ -262,7 +262,7 @@ Demonstrates that RL can:
   - Entropy coefficient: 0.01 (exploration)
   - GAE lambda: 0.95 (advantage estimation)
   - 4 parallel environments (DummyVecEnv)
-  
+
 - **Training Duration**: 50,000 timesteps (~30-60 min on M5 Mac)
 
 - **Hardware**: Apple M5 Mac with MPS acceleration
@@ -288,10 +288,10 @@ Demonstrates that RL can:
 
 #### Expected Outcomes
 
-✅ RL agent learns stable policy (reward increases over training)  
-✅ Discovers 3-5 interneuron subclusters with distinct GAG profiles  
-✅ At least one subcluster enriched for PNN core genes (ACAN, BCAN, etc.)  
-✅ DE analysis shows PNN+ cluster has known PV+ interneuron markers  
+✅ RL agent learns stable policy (reward increases over training)
+✅ Discovers 3-5 interneuron subclusters with distinct GAG profiles
+✅ At least one subcluster enriched for PNN core genes (ACAN, BCAN, etc.)
+✅ DE analysis shows PNN+ cluster has known PV+ interneuron markers
 
 #### Potential Pitfalls
 
@@ -316,7 +316,7 @@ Must demonstrate that RL's computational cost is justified by superior performan
 
 **Baseline Methods**:
 
-1. **Leiden Grid Search**: 
+1. **Leiden Grid Search**:
    - Test resolutions [0.3, 0.5, 0.8, 1.0, 1.5, 2.0]
    - Pick resolution maximizing composite reward
    - Represents "exhaustive hyperparameter tuning"
@@ -366,19 +366,19 @@ Must demonstrate that RL's computational cost is justified by superior performan
 #### Expected Outcomes
 
 **Best-case scenario**:
-✅ RL achieves 15-20% higher composite reward than best baseline  
-✅ Discovers novel subcluster not found by any baseline  
-✅ Improved GAG separation without sacrificing silhouette score  
+✅ RL achieves 15-20% higher composite reward than best baseline
+✅ Discovers novel subcluster not found by any baseline
+✅ Improved GAG separation without sacrificing silhouette score
 
 **Moderate scenario**:
-✅ RL matches best baseline on composite reward  
-✅ Achieves similar result with less hyperparameter tuning  
-✅ More robust across random initializations  
+✅ RL matches best baseline on composite reward
+✅ Achieves similar result with less hyperparameter tuning
+✅ More robust across random initializations
 
 **Acceptable scenario**:
-✅ RL performs comparably to best baseline  
-✅ Provides automated framework reducing manual intervention  
-✅ Demonstrates feasibility of RL for genomics clustering  
+✅ RL performs comparably to best baseline
+✅ Provides automated framework reducing manual intervention
+✅ Demonstrates feasibility of RL for genomics clustering
 
 #### Potential Pitfalls
 
@@ -399,7 +399,7 @@ Must demonstrate that RL's computational cost is justified by superior performan
 
 **Central Innovation**: Clustering refinement is fundamentally a **sequential decision-making problem** where the optimal action at each step depends on the current state AND the anticipated future states. This temporal credit assignment challenge is precisely what RL excels at, but hand-coded heuristics and grid search cannot capture.
 
-**Conceptual Framework**: 
+**Conceptual Framework**:
 
 Traditional clustering treats hyperparameter selection as a **one-shot optimization**:
 ```
@@ -508,15 +508,15 @@ This is not just a better clustering method—it's a **new paradigm** for incorp
 
 We will implement and evaluate our RL framework in three phases:
 
-**Phase 1**: Environment development and validation (Aims 1)  
-**Phase 2**: RL training and biological validation (Aim 2)  
-**Phase 3**: Benchmark comparisons and analysis (Aim 3)  
+**Phase 1**: Environment development and validation (Aims 1)
+**Phase 2**: RL training and biological validation (Aim 2)
+**Phase 3**: Benchmark comparisons and analysis (Aim 3)
 
 ### Detailed Methodology
 
 #### **5.1 Data Acquisition and Preprocessing**
 
-**Primary Dataset**: 
+**Primary Dataset**:
 - **Source**: Allen Brain Cell Types database or Mathys et al. (2019) human brain aging study
 - **Tissue**: Prefrontal cortex (dorsolateral or medial)
 - **Technology**: 10x Chromium or similar droplet-based scRNA-seq
@@ -534,22 +534,22 @@ We will implement and evaluate our RL framework in three phases:
 1. Quality control:
    - Filter cells: 200 < n_genes < 5000, mito% < 20
    - Filter genes: expressed in ≥3 cells
-   
+
 2. Normalization:
    - Total count normalization (10,000 UMIs per cell)
    - Log1p transformation
-   
+
 3. Feature selection:
    - Highly variable genes (3,000 genes, Seurat v3 method)
-   
+
 4. Batch correction & embedding:
    - scVI (30 latent dimensions) OR
    - Pre-computed latents if available
-   
+
 5. Cell type filtering:
    - Extract GAD1+ and/or GAD2+ cells (inhibitory interneurons)
    - Verify with other markers (SLC32A1, DLX1/2)
-   
+
 6. Graph construction:
    - k-NN graph (k=15) on scVI latent
    - Connectivities computed via Scanpy
@@ -620,19 +620,19 @@ State vector = [
     n_clusters / n_cells,  # Normalized cluster count
     mean_cluster_size / n_cells,
     cluster_size_entropy,  # H = -Σ p_i log(p_i)
-    
+
     # Quality (3)
     silhouette_score,  # Mean silhouette on scVI latent [-1, 1]
     graph_modularity,  # [0, 1]
     cluster_balance,  # 1 - (std_size / mean_size)
-    
+
     # GAG enrichment (7 x 4 = 28)
     # For each of 7 gene sets:
     mean_enrichment,  # Mean AUCell score across clusters
     max_enrichment,   # Max cluster enrichment
     F_statistic,      # ANOVA: enrichment ~ cluster
     mutual_info,      # MI(cluster, enrichment_score)
-    
+
     # Progress (1)
     step / max_steps
 ]
@@ -657,7 +657,7 @@ def compute_reward(adata, gene_sets, alpha=0.6, beta=0.4, delta=1.0):
     mod = modularity(adata.uns['neighbors'], adata.obs['clusters'])
     bal = 1 - (cluster_size_std / cluster_size_mean)
     Q_cluster = 0.5*sil + 0.3*mod + 0.2*bal
-    
+
     # GAG enrichment separation
     gag_scores = []
     for gene_set in gene_sets.values():
@@ -665,13 +665,13 @@ def compute_reward(adata, gene_sets, alpha=0.6, beta=0.4, delta=1.0):
         F_stat = f_oneway(*[enrichment[clusters==i] for i in unique_clusters])
         gag_scores.append(F_stat.statistic)
     Q_GAG = np.mean(gag_scores)
-    
+
     # Penalties
     penalty = 0
     if n_clusters == 1 or n_clusters > 0.3*n_cells:
         penalty = 5
     penalty += n_singletons  # Clusters with <10 cells
-    
+
     # Composite
     reward = alpha*Q_cluster + beta*Q_GAG - delta*penalty
     return reward
@@ -740,7 +740,7 @@ PPO(
 - **Checkpointing**: Save every 10,000 steps + best model (by mean reward)
 - **Logging**: TensorBoard (reward, episode length, entropy, loss curves)
 
-**Hardware**: 
+**Hardware**:
 - Apple M5 MacBook Pro with MPS (Metal Performance Shaders)
 - 16GB RAM minimum
 - Fallback to CPU if MPS unavailable (acceptable, ~2x slower)
@@ -770,17 +770,17 @@ best = max(results, key=lambda x: x['reward'])
 def greedy_refine(adata, gene_sets, max_iter=10):
     for i in range(max_iter):
         current_reward = compute_reward(adata, gene_sets)
-        
+
         # Try split
         worst_cluster = find_worst_cluster(adata)
         adata_split = split_cluster(adata.copy(), worst_cluster)
         split_reward = compute_reward(adata_split, gene_sets)
-        
+
         # Try merge
         c1, c2 = find_closest_clusters(adata)
         adata_merge = merge_clusters(adata.copy(), c1, c2)
         merge_reward = compute_reward(adata_merge, gene_sets)
-        
+
         # Keep best
         if split_reward > max(current_reward, merge_reward):
             adata = adata_split
@@ -852,7 +852,7 @@ adata.obs['gag_clusters'] = clusters
    ```python
    # For each method's clusters
    sc.tl.rank_genes_groups(adata, groupby='clusters', method='wilcoxon')
-   
+
    # Extract top 50 markers per cluster
    markers = sc.get.rank_genes_groups_df(adata, group=None)
    markers = markers[markers['pvals_adj'] < 0.05]
@@ -872,7 +872,7 @@ adata.obs['gag_clusters'] = clusters
        'VIP_interneurons': ['VIP', 'GAD1', 'GAD2'],
        'PNN_associated': ['ACAN', 'BCAN', 'NCAN', 'HAPLN1']
    }
-   
+
    # For each cluster, compute mean expression of marker sets
    # Expect: some clusters high PV+PNN, others high PV+low-PNN
    ```
@@ -1814,7 +1814,7 @@ Our framework generalizes to any tissue where ECM heterogeneity matters:
   - Entropy regularization (ent_coef=0.01)
   - Reward normalization
   - Clip extreme rewards
-  
+
 - **Reactive**:
   - Reduce learning rate (3e-4 → 1e-4)
   - Increase entropy coefficient (0.01 → 0.05)
@@ -1972,7 +1972,7 @@ Our framework generalizes to any tissue where ECM heterogeneity matters:
 - Estimated runtime: 2-3 hours
 - Outputs match published results (within stochastic variation)
 
-**Testing**: 
+**Testing**:
 - Unit tests for all functions (`pytest tests/`)
 - Integration test (full pipeline on toy data)
 - CI/CD: GitHub Actions runs tests on every commit
@@ -2026,7 +2026,7 @@ This project represents a **convergence of cutting-edge machine learning and fun
 
 The project is **feasible** (proven technologies, manageable scope, clear fallbacks), **impactful** (open-source tools, methodological innovation, biological insights), and **ethical** (public data, transparent methods, responsible translation).
 
-**Timeline**: 2-3 weeks with Claude Code  
+**Timeline**: 2-3 weeks with Claude Code
 **Outcome**: High-quality portfolio project + potential publication + community resource
 
 ---
