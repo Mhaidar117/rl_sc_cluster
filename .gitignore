@@ -204,5 +204,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# Cursor files
+.cursor/
 # documents:
 docs/docs/Review of scRNA-seq data clustering.pdf
