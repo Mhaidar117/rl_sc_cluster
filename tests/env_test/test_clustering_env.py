@@ -296,9 +296,9 @@ def test_resolution_tracking(env):
     env.reset()
     assert env.current_resolution == 0.5
 
-    # Resolution should remain constant (placeholder behavior in Stage 2)
+    # Resolution should update with actions (Stage 3)
     env.step(2)  # Increase resolution action
-    assert env.current_resolution == 0.5  # Unchanged until Stage 3
+    assert env.current_resolution == pytest.approx(0.6, abs=0.01)
 
 
 def test_clustering_performed_on_reset(env):
@@ -326,3 +326,182 @@ def test_state_has_correct_components(env):
 
     # Progress (34) should be in [0, 1]
     assert 0 <= state[34] <= 1
+
+
+# Stage 3: Action Implementation Tests
+
+
+def test_action_recluster_increment(env):
+    """Test that re-cluster increment action works."""
+    env.reset()
+    initial_resolution = env.current_resolution
+
+    state, reward, terminated, truncated, info = env.step(2)  # Increment resolution
+
+    assert info["action_success"] is True
+    assert env.current_resolution > initial_resolution
+    assert env.current_resolution == pytest.approx(initial_resolution + 0.1, abs=0.01)
+
+
+def test_action_recluster_decrement(env):
+    """Test that re-cluster decrement action works."""
+    env.reset()
+    initial_resolution = env.current_resolution
+
+    state, reward, terminated, truncated, info = env.step(3)  # Decrement resolution
+
+    assert info["action_success"] is True
+    assert env.current_resolution < initial_resolution
+    assert env.current_resolution == pytest.approx(initial_resolution - 0.1, abs=0.01)
+
+
+def test_action_recluster_resolution_clamped(env):
+    """Test that resolution clamping works."""
+    env.reset()
+
+    # Set resolution to max (or close to it)
+    env.current_resolution = 1.95
+    state, reward, terminated, truncated, info = env.step(2)  # Try to increment
+
+    assert info["action_success"] is True
+    # Should clamp to 2.0
+    assert env.current_resolution == pytest.approx(2.0, abs=0.01)
+    # May or may not be clamped depending on exact value
+    if env.current_resolution >= 2.0:
+        assert info["resolution_clamped"] is True
+
+    # Set resolution to min (or close to it)
+    env.current_resolution = 0.15
+    state, reward, terminated, truncated, info = env.step(3)  # Try to decrement
+
+    assert info["action_success"] is True
+    # Should clamp to 0.1
+    assert env.current_resolution == pytest.approx(0.1, abs=0.01)
+    # May or may not be clamped depending on exact value
+    if env.current_resolution <= 0.1:
+        assert info["resolution_clamped"] is True
+
+
+def test_action_merge_closest_pair(env):
+    """Test that merge action works."""
+    env.reset()
+    initial_n_clusters = len(env.adata.obs["clusters"].unique())
+
+    # Only merge if we have more than 1 cluster
+    if initial_n_clusters > 1:
+        state, reward, terminated, truncated, info = env.step(1)  # Merge
+
+        assert info["action_success"] is True
+        final_n_clusters = len(env.adata.obs["clusters"].unique())
+        assert final_n_clusters == initial_n_clusters - 1
+
+
+def test_action_split_worst_cluster(env):
+    """Test that split action works."""
+    env.reset()
+    initial_n_clusters = len(env.adata.obs["clusters"].unique())
+
+    state, reward, terminated, truncated, info = env.step(0)  # Split
+
+    assert info["action_success"] is True
+
+    # May or may not split (depends on data and whether sub-clustering produces >1 cluster)
+    if not info["no_change"]:
+        final_n_clusters = len(env.adata.obs["clusters"].unique())
+        assert final_n_clusters >= initial_n_clusters
+
+
+def test_action_info_dict_stage3(env):
+    """Test that info dict contains Stage 3 action fields."""
+    env.reset()
+
+    state, reward, terminated, truncated, info = env.step(0)
+
+    # Check new Stage 3 fields
+    assert "action_success" in info
+    assert "action_error" in info
+    assert "resolution_clamped" in info
+    assert "no_change" in info
+
+    assert isinstance(info["action_success"], bool)
+    assert info["action_error"] is None or isinstance(info["action_error"], str)
+    assert isinstance(info["resolution_clamped"], bool)
+    assert isinstance(info["no_change"], bool)
+
+
+def test_action_invalid_split_single_cluster(env):
+    """Test that invalid split action (single cluster) is handled gracefully."""
+    env.reset()
+
+    # Force single cluster
+    env.adata.obs["clusters"] = 0
+
+    state, reward, terminated, truncated, info = env.step(0)  # Try to split
+
+    assert info["action_success"] is False
+    assert info["no_change"] is True
+    assert info["action_error"] is not None
+    assert "Cannot split" in info["action_error"]
+
+
+def test_action_invalid_merge_single_cluster(env):
+    """Test that invalid merge action (single cluster) is handled gracefully."""
+    env.reset()
+
+    # Force single cluster
+    env.adata.obs["clusters"] = 0
+
+    state, reward, terminated, truncated, info = env.step(1)  # Try to merge
+
+    assert info["action_success"] is False
+    assert info["no_change"] is True
+    assert info["action_error"] is not None
+    assert "Cannot merge" in info["action_error"]
+
+
+def test_cluster_ids_numeric_after_actions(env):
+    """Test that cluster IDs remain numeric after actions."""
+    env.reset()
+
+    # Execute various actions
+    env.step(2)  # Re-cluster increment
+    assert env.adata.obs["clusters"].dtype in [np.int8, np.int16, np.int32, np.int64]
+
+    env.step(3)  # Re-cluster decrement
+    assert env.adata.obs["clusters"].dtype in [np.int8, np.int16, np.int32, np.int64]
+
+    if len(env.adata.obs["clusters"].unique()) > 1:
+        env.step(1)  # Merge
+        assert env.adata.obs["clusters"].dtype in [np.int8, np.int16, np.int32, np.int64]
+
+
+def test_state_extraction_after_actions(env):
+    """Test that state extraction still works after actions."""
+    env.reset()
+    state1, _ = env.reset()
+
+    # Execute an action
+    state2, _, _, _, _ = env.step(2)  # Re-cluster increment
+
+    # State should still be valid
+    assert state2.shape == (35,)
+    assert np.all(np.isfinite(state2))
+
+    # Clustering metrics may have changed
+    # (We don't assert specific changes as they depend on data)
+
+
+def test_multiple_actions_sequence(env):
+    """Test executing a sequence of actions."""
+    env.reset()
+
+    # Execute multiple actions
+    for action in [2, 2, 3, 1, 0]:  # Increment, increment, decrement, merge, split
+        state, reward, terminated, truncated, info = env.step(action)
+
+        # Should not crash
+        assert state.shape == (35,)
+        assert info["action_success"] is True or info["no_change"] is True
+
+        if terminated:
+            break
