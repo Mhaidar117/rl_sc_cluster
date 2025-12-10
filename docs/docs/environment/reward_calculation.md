@@ -2,6 +2,8 @@
 
 This document details the composite reward function used in the clustering environment.
 
+**Implementation Status**: Complete (Stage 4)
+
 ---
 
 ## Overview
@@ -20,6 +22,48 @@ reward = α * Q_cluster + β * Q_GAG - δ * Penalty
 
 ---
 
+## Implementation
+
+The reward system is implemented in `rl_sc_cluster_utils/environment/rewards.py` with two main classes:
+
+### RewardCalculator
+
+```python
+from rl_sc_cluster_utils.environment import RewardCalculator
+
+calculator = RewardCalculator(
+    adata,
+    gene_sets,
+    alpha=0.6,   # Weight for clustering quality
+    beta=0.4,    # Weight for GAG enrichment
+    delta=1.0    # Weight for penalties
+)
+
+# Compute reward
+reward, info = calculator.compute_reward(
+    adata,
+    previous_reward=None,
+    resolution_clamped=False
+)
+```
+
+### RewardNormalizer
+
+```python
+from rl_sc_cluster_utils.environment import RewardNormalizer
+
+normalizer = RewardNormalizer(clip_range=10.0)
+
+# Update and normalize
+normalizer.update(reward)
+normalized = normalizer.normalize(reward)
+
+# Or use convenience method
+normalized = normalizer.update_and_normalize(reward)
+```
+
+---
+
 ## Q_cluster: Clustering Quality
 
 ### Components
@@ -32,13 +76,12 @@ Q_cluster = 0.5 * silhouette + 0.3 * modularity + 0.2 * balance
 
 **Definition**: Measures how well-separated clusters are.
 
-**Computation**:
+**Computation** (via shared utilities):
 ```python
-from sklearn.metrics import silhouette_score
+from rl_sc_cluster_utils.environment.utils import compute_clustering_quality_metrics
 
-silhouette = silhouette_score(
-    adata.obsm['X_scvi'],  # Embeddings
-    adata.obs['clusters']  # Cluster labels
+silhouette, modularity, balance = compute_clustering_quality_metrics(
+    adata, embeddings, neighbors_computed=True
 )
 ```
 
@@ -55,22 +98,7 @@ silhouette = silhouette_score(
 
 **Definition**: Measures quality of community structure in k-NN graph.
 
-**Computation**:
-```python
-import scanpy as sc
-
-sc.tl.modularity(adata, key='clusters')
-modularity = adata.uns['modularity']['clusters']
-```
-
-**Or custom implementation**:
-```python
-def compute_modularity(neighbors_graph, cluster_labels):
-    """Compute Newman-Girvan modularity."""
-    # Modularity = (fraction of edges within communities) -
-    #              (expected fraction if random)
-    ...
-```
+**Computation**: Uses `scanpy.metrics.clustering.modularity()` when neighbors graph is available.
 
 **Range**: Typically [-0.5, 1]
 - **+1**: Perfect community structure
@@ -87,10 +115,6 @@ def compute_modularity(neighbors_graph, cluster_labels):
 
 **Computation**:
 ```python
-cluster_sizes = adata.obs['clusters'].value_counts()
-mean_size = cluster_sizes.mean()
-std_size = cluster_sizes.std()
-
 balance = 1 - (std_size / (mean_size + 1e-10))
 ```
 
@@ -108,49 +132,27 @@ balance = 1 - (std_size / (mean_size + 1e-10))
 
 Measures how well clusters separate cells by GAG-sulfation pathway expression.
 
-**Computation**:
+**Implementation**:
 ```python
-Q_GAG = mean([F_statistic + mutual_info for gene_set in gene_sets])
+# Compute GAG metrics using shared utilities
+from rl_sc_cluster_utils.environment.utils import compute_gag_enrichment_metrics
+
+gag_metrics = compute_gag_enrichment_metrics(adata, gene_sets)
+
+# Normalize F-statistics and average
+f_stats_normalized = [np.log1p(f_stat) / 10.0 for f_stat in f_stats]
+Q_GAG = np.mean(f_stats_normalized)
 ```
-
-For each of 7 gene sets, compute:
-1. **ANOVA F-statistic**: How well clusters separate by enrichment
-2. **Mutual Information**: Information shared between clusters and enrichment
-
----
 
 ### Per-Cell Enrichment Scores
 
-**Method**: AUCell (Area Under the Curve)
+**Method**: Simplified AUCell (mean expression of gene set per cell)
 
 ```python
-def compute_aucell_scores(adata, gene_set):
-    """
-    Compute AUCell enrichment scores for a gene set.
+from rl_sc_cluster_utils.environment.utils import compute_enrichment_scores
 
-    For each cell:
-    1. Rank all genes by expression (highest = rank 1)
-    2. Compute AUC: area under curve of gene set genes in ranking
-    3. Higher AUC = cell expresses more genes in set
-    """
-    # Get expression matrix (log-normalized)
-    expr = adata.X  # or adata.layers['log_normalized']
-
-    # Get gene indices for gene set
-    gene_indices = [adata.var_names.get_loc(gene)
-                    for gene in gene_set if gene in adata.var_names]
-
-    if len(gene_indices) == 0:
-        return np.zeros(adata.n_obs)  # No genes found
-
-    # Rank genes per cell (higher expression = higher rank)
-    # Simplified: use mean expression of gene set
-    aucell_scores = np.mean(expr[:, gene_indices], axis=1)
-
-    return aucell_scores
+scores = compute_enrichment_scores(adata, gene_set)
 ```
-
-**Alternative**: Use `scanpy.tl.score_genes` or `scanpy.tl.score_genes_cell_cycle`
 
 ---
 
@@ -158,25 +160,9 @@ def compute_aucell_scores(adata, gene_set):
 
 **Definition**: Measures how well clusters separate by enrichment levels.
 
-**Computation**:
-```python
-from scipy.stats import f_oneway
+**Normalization**: `log1p(f_stat) / 10.0` to scale to ~[0, 1]
 
-def compute_f_statistic(adata, gene_set):
-    """Compute ANOVA F-statistic for enrichment ~ cluster."""
-    enrichment = compute_aucell_scores(adata, gene_set)
-
-    # Group by cluster
-    clusters = adata.obs['clusters'].unique()
-    groups = [enrichment[adata.obs['clusters'] == c] for c in clusters]
-
-    # One-way ANOVA
-    f_stat, p_value = f_oneway(*groups)
-
-    return f_stat
-```
-
-**Range**: [0, ∞]
+**Range**: [0, ∞] (raw), [0, ~1] (normalized)
 - **High F-stat**: Clusters have very different enrichment levels (good separation)
 - **Low F-stat**: Clusters have similar enrichment (poor separation)
 
@@ -186,22 +172,7 @@ def compute_f_statistic(adata, gene_set):
 
 **Definition**: Measures information shared between cluster labels and enrichment levels.
 
-**Computation**:
-```python
-from sklearn.metrics import mutual_info_score
-
-def compute_mutual_info(adata, gene_set):
-    """Compute MI between clusters and enrichment."""
-    enrichment = compute_aucell_scores(adata, gene_set)
-
-    # Discretize enrichment into bins
-    enrichment_bins = pd.cut(enrichment, bins=10, labels=False)
-
-    # Compute MI
-    mi = mutual_info_score(adata.obs['clusters'], enrichment_bins)
-
-    return mi
-```
+**Computation**: Enrichment scores are binned into 10 bins, then MI is computed.
 
 **Range**: [0, log(n_clusters)]
 - **High MI**: Cluster labels predict enrichment well (good separation)
@@ -209,97 +180,38 @@ def compute_mutual_info(adata, gene_set):
 
 ---
 
-### Q_GAG Aggregation
-
-```python
-def compute_q_gag(adata, gene_sets):
-    """Compute Q_GAG across all gene sets."""
-    gag_scores = []
-
-    for gene_set_name, gene_set in gene_sets.items():
-        # Compute enrichment scores
-        enrichment = compute_aucell_scores(adata, gene_set)
-
-        # Compute F-statistic
-        f_stat = compute_f_statistic(adata, gene_set)
-
-        # Compute mutual information
-        mi = compute_mutual_info(adata, gene_set)
-
-        # Combine (both measure separation, so sum)
-        gag_scores.append(f_stat + mi)
-
-    # Average across gene sets
-    Q_GAG = np.mean(gag_scores)
-
-    return Q_GAG
-```
-
----
-
 ## Penalties
 
-### Penalty Components
+### Implemented Penalty Components
 
 ```python
-penalty = degenerate_penalty + degradation_penalty + bounds_penalty
+penalty = degenerate_penalty + singleton_penalty + bounds_penalty
 ```
-
----
 
 ### Degenerate States Penalty
 
 **Purpose**: Discourage biologically meaningless clusterings.
 
-```python
-def compute_degenerate_penalty(adata):
-    """Compute penalty for degenerate clustering states."""
-    penalty = 0
-    n_clusters = len(adata.obs['clusters'].unique())
-    n_cells = adata.n_obs
-
-    # Too few clusters (all cells in one cluster)
-    if n_clusters == 1:
-        penalty += 5
-
-    # Too many clusters (over-splitting)
-    if n_clusters > 0.3 * n_cells:
-        penalty += 5
-
-    # Singleton clusters (biologically meaningless)
-    cluster_sizes = adata.obs['clusters'].value_counts()
-    n_singletons = (cluster_sizes == 1).sum()
-    penalty += n_singletons * 2
-
-    return penalty
-```
+| Condition | Penalty |
+|-----------|---------|
+| `n_clusters == 1` | +1.0 |
+| `n_clusters > 0.3 * n_cells` | +1.0 |
 
 **Rationale**:
 - **1 cluster**: No separation, useless for analysis
 - **>30% clusters**: Over-fitting, likely noise
-- **Singletons**: Not biologically meaningful cell types
 
 ---
 
-### Quality Degradation Penalty
+### Singleton Penalty
 
-**Purpose**: Discourage actions that worsen clustering.
+**Purpose**: Discourage clusters with too few cells.
 
-```python
-def compute_degradation_penalty(previous_reward, current_reward):
-    """Penalize actions that decrease reward."""
-    if previous_reward is None:
-        return 0
+| Condition | Penalty |
+|-----------|---------|
+| Cluster with < 10 cells | +0.1 per singleton |
 
-    if current_reward < previous_reward:
-        # Penalty proportional to degradation
-        degradation = previous_reward - current_reward
-        return degradation
-    else:
-        return 0
-```
-
-**Rationale**: Guide agent away from bad actions.
+**Rationale**: Clusters with very few cells are not biologically meaningful cell types.
 
 ---
 
@@ -307,14 +219,9 @@ def compute_degradation_penalty(previous_reward, current_reward):
 
 **Purpose**: Discourage hitting resolution boundaries.
 
-```python
-def compute_bounds_penalty(resolution_clamped):
-    """Small penalty for hitting resolution bounds."""
-    if resolution_clamped:
-        return 0.1
-    else:
-        return 0
-```
+| Condition | Penalty |
+|-----------|---------|
+| `resolution_clamped == True` | +0.1 |
 
 **Rationale**: Small signal to learn boundaries without harsh punishment.
 
@@ -324,73 +231,74 @@ def compute_bounds_penalty(resolution_clamped):
 
 ### Final Computation
 
+The reward is computed in `RewardCalculator.compute_reward()`:
+
 ```python
-def compute_reward(
-    adata,
-    gene_sets,
-    previous_reward=None,
-    resolution_clamped=False,
-    alpha=0.6,
-    beta=0.4,
-    delta=1.0
-):
-    """Compute composite reward."""
+def compute_reward(self, adata, previous_reward=None, resolution_clamped=False):
+    # Compute Q_cluster
+    Q_cluster = 0.5 * silhouette + 0.3 * modularity + 0.2 * balance
 
-    # Clustering quality
-    Q_cluster = compute_q_cluster(adata)
+    # Compute Q_GAG (normalized F-statistics)
+    Q_GAG = mean(log1p(f_stat) / 10.0 for each gene set)
 
-    # GAG enrichment
-    Q_GAG = compute_q_gag(adata, gene_sets)
-
-    # Penalties
-    degenerate = compute_degenerate_penalty(adata)
-    degradation = compute_degradation_penalty(previous_reward, current_reward)
-    bounds = compute_bounds_penalty(resolution_clamped)
-
-    penalty = degenerate + degradation + bounds
+    # Compute penalty
+    penalty = degenerate_penalty + singleton_penalty + bounds_penalty
 
     # Composite reward
     reward = alpha * Q_cluster + beta * Q_GAG - delta * penalty
 
-    return reward
+    return reward, info
 ```
 
 ---
 
-## Reward Normalization (Optional)
+## Reward Normalization
 
-### Running Statistics
+### RewardNormalizer Class
+
+Implemented in `rl_sc_cluster_utils/environment/rewards.py`:
 
 ```python
 class RewardNormalizer:
-    def __init__(self):
-        self.reward_history = []
-        self.mean = 0.0
-        self.std = 1.0
+    def __init__(self, clip_range=10.0):
+        self.clip_range = clip_range
+        self._rewards = []
+        self._mean = 0.0
+        self._std = 1.0
 
     def update(self, reward):
         """Update running statistics."""
-        self.reward_history.append(reward)
-
-        # Update mean and std
-        self.mean = np.mean(self.reward_history)
-        self.std = np.std(self.reward_history) + 1e-10
+        self._rewards.append(reward)
+        if len(self._rewards) >= 2:
+            self._mean = np.mean(self._rewards)
+            self._std = np.std(self._rewards)
 
     def normalize(self, reward):
         """Normalize reward using running statistics."""
-        return (reward - self.mean) / self.std
+        normalized = (reward - self._mean) / (self._std + 1e-10)
+        return np.clip(normalized, -self.clip_range, self.clip_range)
+
+    def reset(self):
+        """Reset statistics (called on episode reset)."""
+        self._rewards = []
+        self._mean = 0.0
+        self._std = 1.0
 ```
 
-### Usage
+### Usage in ClusteringEnv
 
 ```python
-if normalize_rewards:
-    normalized_reward = reward_normalizer.normalize(reward)
-else:
-    normalized_reward = reward
+env = ClusteringEnv(
+    adata,
+    gene_sets=gene_sets,
+    normalize_rewards=True  # Enable normalization
+)
 ```
 
-**When to update**: After each episode (not each step).
+When enabled, reward normalization:
+- Resets on each `env.reset()` call
+- Updates running statistics on each step
+- Returns normalized reward from `env.step()`
 
 ---
 
@@ -398,18 +306,51 @@ else:
 
 ### Single Cluster
 - **Silhouette**: Set to 0 (no separation)
-- **Modularity**: Compute normally (may be high)
+- **Modularity**: 0 (no comparison possible)
 - **Balance**: Set to 1 (perfectly balanced)
 - **Q_GAG**: Set to 0 (no separation possible)
+- **Penalty**: +1.0 for degenerate state
+
+### No Clusters
+- All metrics default to 0
+- Balance defaults to 0
 
 ### Singleton Clusters
 - **Silhouette**: May be undefined (set to 0)
-- **Modularity**: Low (no community structure)
-- **Balance**: 1 (all same size, but meaningless)
+- **F-stat**: May be NaN (set to 0)
+- **Penalty**: +0.1 per cluster with < 10 cells
 
 ### Missing Gene Sets
-- If gene set has no genes: Set F-stat and MI to 0
-- If gene set has <3 genes: Warn and set to 0
+- If `gene_sets` is empty or None: Q_GAG = 0.0
+- If gene set has no valid genes: F-stat = 0 for that set
+
+---
+
+## Info Dictionary
+
+The `step()` method returns an info dictionary with reward components:
+
+```python
+info = {
+    # Reward components
+    "raw_reward": ...,      # Reward before normalization
+    "Q_cluster": ...,       # Clustering quality score
+    "Q_GAG": ...,           # GAG enrichment score
+    "penalty": ...,         # Total penalty
+
+    # Individual metrics
+    "silhouette": ...,
+    "modularity": ...,
+    "balance": ...,
+    "n_singletons": ...,
+    "mean_f_stat": ...,
+
+    # Other info
+    "n_clusters": ...,
+    "resolution_clamped": ...,
+    ...
+}
+```
 
 ---
 
@@ -420,6 +361,18 @@ else:
 - β = 0.4 (GAG enrichment)
 - δ = 1.0 (penalty multiplier)
 
+### Custom Weights
+
+```python
+env = ClusteringEnv(
+    adata,
+    gene_sets=gene_sets,
+    reward_alpha=0.5,   # Custom clustering weight
+    reward_beta=0.3,    # Custom GAG weight
+    reward_delta=0.8    # Custom penalty weight
+)
+```
+
 ### Tuning Strategy
 - Use Optuna for hyperparameter optimization
 - Grid search or Bayesian optimization
@@ -427,5 +380,6 @@ else:
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-01-XX
+**Document Version**: 2.0
+**Last Updated**: December 2025
+**Implementation Status**: Complete (Stage 4)

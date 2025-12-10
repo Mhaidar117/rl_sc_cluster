@@ -9,6 +9,7 @@ import numpy as np
 import scanpy as sc
 
 from .actions import ActionExecutor
+from .rewards import RewardCalculator, RewardNormalizer
 from .state import StateExtractor
 
 
@@ -19,6 +20,14 @@ class ClusteringEnv(gym.Env):
     State: 35-dimensional vector encoding clustering state
     Actions: 5 discrete actions (split, merge, re-cluster, accept)
     Reward: Composite of clustering quality and GAG enrichment
+
+    Reward Formula:
+        R = α·Q_cluster + β·Q_GAG - δ·Penalty
+
+    Where:
+    - Q_cluster = 0.5·silhouette + 0.3·modularity + 0.2·balance
+    - Q_GAG = mean(log1p(f_stat) / 10.0) across gene sets
+    - Penalty = degenerate states + singletons + bounds violations
 
     Parameters
     ----------
@@ -32,9 +41,15 @@ class ClusteringEnv(gym.Env):
     normalize_state : bool, optional
         Whether to normalize state vector (default: False)
     normalize_rewards : bool, optional
-        Whether to normalize rewards (default: False)
+        Whether to normalize rewards using running statistics (default: True)
     render_mode : str, optional
         Render mode for visualization (default: None)
+    reward_alpha : float, optional
+        Weight for clustering quality in reward (default: 0.6)
+    reward_beta : float, optional
+        Weight for GAG enrichment in reward (default: 0.4)
+    reward_delta : float, optional
+        Weight for penalties in reward (default: 1.0)
     """
 
     metadata = {"render_modes": ["human", "rgb_array"]}
@@ -45,8 +60,11 @@ class ClusteringEnv(gym.Env):
         gene_sets: Optional[Dict[str, List[str]]] = None,
         max_steps: int = 15,
         normalize_state: bool = False,
-        normalize_rewards: bool = False,
+        normalize_rewards: bool = True,
         render_mode: Optional[str] = None,
+        reward_alpha: float = 0.6,
+        reward_beta: float = 0.4,
+        reward_delta: float = 1.0,
     ) -> None:
         super().__init__()
 
@@ -70,6 +88,20 @@ class ClusteringEnv(gym.Env):
             max_resolution=2.0,
         )
 
+        # Initialize reward calculator
+        self.reward_calculator = RewardCalculator(
+            self.adata,
+            self.gene_sets,
+            alpha=reward_alpha,
+            beta=reward_beta,
+            delta=reward_delta,
+        )
+
+        # Initialize reward normalizer (if enabled)
+        self.reward_normalizer: Optional[RewardNormalizer] = None
+        if self.normalize_rewards:
+            self.reward_normalizer = RewardNormalizer()
+
         # Action space: 5 discrete actions
         # 0: Split worst cluster
         # 1: Merge closest pair
@@ -88,6 +120,7 @@ class ClusteringEnv(gym.Env):
         self.state: Optional[np.ndarray] = None
         self.current_resolution = 0.5  # Initial Leiden resolution
         self._initial_clustering_done = False
+        self._previous_reward: Optional[float] = None
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
@@ -114,6 +147,11 @@ class ClusteringEnv(gym.Env):
         # Reset episode tracking
         self.current_step = 0
         self.current_resolution = 0.5
+        self._previous_reward = None
+
+        # Reset reward normalizer (if enabled)
+        if self.reward_normalizer is not None:
+            self.reward_normalizer.reset()
 
         # Perform initial clustering if not already done or if we need to reset
         # Check if neighbors graph exists, if not compute it
@@ -174,13 +212,13 @@ class ClusteringEnv(gym.Env):
         state : np.ndarray
             Next state vector (35 dimensions)
         reward : float
-            Reward for the action
+            Reward for the action (may be normalized if normalize_rewards=True)
         terminated : bool
             Whether episode is terminated (Accept action)
         truncated : bool
             Whether episode is truncated (max steps reached)
         info : dict
-            Additional information
+            Additional information including reward components
         """
         # Validate action (Gymnasium compliance: raise ValueError for out-of-bounds)
         if not self.action_space.contains(action):
@@ -202,9 +240,21 @@ class ClusteringEnv(gym.Env):
         )
         self.state = next_state
 
-        # Placeholder: constant reward (will be implemented in Stage 4)
-        # TODO: Use action_result["resolution_clamped"] for penalty in Stage 4
-        reward = 0.0
+        # Compute reward using RewardCalculator
+        raw_reward, reward_info = self.reward_calculator.compute_reward(
+            self.adata,
+            previous_reward=self._previous_reward,
+            resolution_clamped=action_result["resolution_clamped"],
+        )
+
+        # Apply normalization if enabled
+        if self.reward_normalizer is not None:
+            reward = self.reward_normalizer.update_and_normalize(raw_reward)
+        else:
+            reward = raw_reward
+
+        # Update previous reward for next step
+        self._previous_reward = raw_reward
 
         # Check termination conditions
         terminated = action == 4  # Accept action
@@ -215,6 +265,7 @@ class ClusteringEnv(gym.Env):
             len(self.adata.obs["clusters"].unique()) if "clusters" in self.adata.obs else 0
         )
 
+        # Build info dict with action results and reward components
         info = {
             "action": action,
             "step": self.current_step,
@@ -226,6 +277,16 @@ class ClusteringEnv(gym.Env):
             "action_error": action_result["error"],
             "resolution_clamped": action_result["resolution_clamped"],
             "no_change": action_result["no_change"],
+            # Reward components
+            "raw_reward": raw_reward,
+            "Q_cluster": reward_info["Q_cluster"],
+            "Q_GAG": reward_info["Q_GAG"],
+            "penalty": reward_info["penalty"],
+            "silhouette": reward_info["silhouette"],
+            "modularity": reward_info["modularity"],
+            "balance": reward_info["balance"],
+            "n_singletons": reward_info["n_singletons"],
+            "mean_f_stat": reward_info["mean_f_stat"],
         }
 
         return next_state, reward, terminated, truncated, info

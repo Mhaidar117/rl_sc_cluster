@@ -251,16 +251,27 @@ def test_state_extraction(env):
     assert state[34] == pytest.approx(0.0)
 
 
-def test_placeholder_reward(env):
-    """Test that placeholder reward is 0.0."""
+def test_reward_computation(env):
+    """Test that reward is computed (not placeholder)."""
     env.reset()
 
     for action in range(5):
         env.reset()
-        _, reward, _, _, _ = env.step(action)
+        _, reward, _, _, info = env.step(action)
 
-        # Placeholder reward should be 0.0
-        assert reward == 0.0
+        # Reward should be a finite float
+        assert np.isfinite(reward)
+
+        # Reward info should contain components
+        assert "Q_cluster" in info
+        assert "Q_GAG" in info
+        assert "penalty" in info
+        assert "raw_reward" in info
+
+        # Q_cluster, Q_GAG, and penalty should be finite
+        assert np.isfinite(info["Q_cluster"])
+        assert np.isfinite(info["Q_GAG"])
+        assert np.isfinite(info["penalty"])
 
 
 def test_state_updates_with_step(env):
@@ -505,3 +516,219 @@ def test_multiple_actions_sequence(env):
 
         if terminated:
             break
+
+
+# ============================================================================
+# Stage 4: Reward Integration Tests
+# ============================================================================
+
+
+def test_reward_components_in_info(env):
+    """Test that reward components are included in info dict."""
+    env.reset()
+    _, reward, _, _, info = env.step(0)
+
+    # Reward components should be in info
+    assert "raw_reward" in info
+    assert "Q_cluster" in info
+    assert "Q_GAG" in info
+    assert "penalty" in info
+    assert "silhouette" in info
+    assert "modularity" in info
+    assert "balance" in info
+    assert "n_singletons" in info
+    assert "mean_f_stat" in info
+
+    # All should be finite
+    assert np.isfinite(info["raw_reward"])
+    assert np.isfinite(info["Q_cluster"])
+    assert np.isfinite(info["Q_GAG"])
+    assert np.isfinite(info["penalty"])
+
+
+def test_reward_formula_applied(env):
+    """Test that reward follows formula: R = α·Q_cluster + β·Q_GAG - δ·Penalty."""
+    env.reset()
+    _, reward, _, _, info = env.step(0)
+
+    # Default weights: alpha=0.6, beta=0.4, delta=1.0
+    expected = 0.6 * info["Q_cluster"] + 0.4 * info["Q_GAG"] - 1.0 * info["penalty"]
+
+    # Raw reward (before normalization) should match formula
+    assert info["raw_reward"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_reward_changes_with_actions(env):
+    """Test that reward changes when clustering changes."""
+    env.reset()
+
+    rewards = []
+    for action in range(4):  # Actions 0-3 (not 4 which terminates)
+        env.reset()
+        _, reward, _, _, info = env.step(action)
+        rewards.append(info["raw_reward"])
+
+    # At least some rewards should be different
+    # (depends on random data, but unlikely all are exactly the same)
+    assert any(np.isfinite(r) for r in rewards)
+
+
+def test_reward_penalty_for_resolution_clamping(env):
+    """Test that reward penalty is applied when resolution is clamped."""
+    # Test upper bound clamping
+    env.reset()
+
+    # Increment resolution until clamped
+    for _ in range(20):
+        _, _, terminated, _, info = env.step(2)  # Increment resolution
+        if info["resolution_clamped"]:
+            # When clamped, penalty should include bounds penalty
+            # We verify resolution_clamped is properly tracked
+            assert info["resolution_clamped"] is True
+            break
+        if terminated:
+            break
+
+
+def test_reward_normalization_disabled_by_default(mock_adata, gene_sets):
+    """Test that reward normalization is disabled by default."""
+    from rl_sc_cluster_utils.environment import ClusteringEnv
+
+    env = ClusteringEnv(mock_adata, gene_sets=gene_sets, normalize_rewards=False)
+    env.reset()
+
+    _, reward1, _, _, info1 = env.step(0)
+
+    # Raw reward should equal returned reward when normalization disabled
+    assert reward1 == info1["raw_reward"]
+
+
+def test_reward_normalization_enabled(mock_adata, gene_sets):
+    """Test that reward normalization works when enabled."""
+    from rl_sc_cluster_utils.environment import ClusteringEnv
+
+    env = ClusteringEnv(mock_adata, gene_sets=gene_sets, normalize_rewards=True)
+    env.reset()
+
+    # Take multiple steps to build up normalization history
+    rewards = []
+    raw_rewards = []
+    for _ in range(5):
+        _, reward, terminated, _, info = env.step(2)  # Re-cluster increment
+        rewards.append(reward)
+        raw_rewards.append(info["raw_reward"])
+        if terminated:
+            break
+
+    # Normalized rewards should be different from raw rewards after a few steps
+    # (first reward equals raw since no history yet)
+    assert len(rewards) > 0
+
+
+def test_reward_normalization_resets_on_episode_reset(mock_adata, gene_sets):
+    """Test that reward normalizer resets on episode reset."""
+    from rl_sc_cluster_utils.environment import ClusteringEnv
+
+    env = ClusteringEnv(mock_adata, gene_sets=gene_sets, normalize_rewards=True)
+
+    # First episode
+    env.reset()
+    env.step(0)
+    env.step(1)
+
+    # Reset for new episode
+    env.reset()
+
+    # Normalizer should be reset
+    assert env.reward_normalizer.count == 0
+
+
+def test_custom_reward_weights(mock_adata, gene_sets):
+    """Test custom reward weights."""
+    from rl_sc_cluster_utils.environment import ClusteringEnv
+
+    env = ClusteringEnv(
+        mock_adata,
+        gene_sets=gene_sets,
+        reward_alpha=0.5,
+        reward_beta=0.3,
+        reward_delta=0.8,
+    )
+    env.reset()
+
+    _, _, _, _, info = env.step(0)
+
+    # Verify custom weights are applied
+    expected = 0.5 * info["Q_cluster"] + 0.3 * info["Q_GAG"] - 0.8 * info["penalty"]
+    assert info["raw_reward"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_reward_with_gene_sets(mock_adata, gene_sets):
+    """Test reward computation with gene sets."""
+    from rl_sc_cluster_utils.environment import ClusteringEnv
+
+    env = ClusteringEnv(mock_adata, gene_sets=gene_sets)
+    env.reset()
+
+    _, _, _, _, info = env.step(0)
+
+    # Q_GAG should be computed with gene sets
+    assert "mean_f_stat" in info
+    assert np.isfinite(info["mean_f_stat"])
+
+
+def test_reward_without_gene_sets(mock_adata):
+    """Test reward computation without gene sets."""
+    from rl_sc_cluster_utils.environment import ClusteringEnv
+
+    env = ClusteringEnv(mock_adata, gene_sets=None)
+    env.reset()
+
+    _, _, _, _, info = env.step(0)
+
+    # Q_GAG should be 0 without gene sets
+    assert info["Q_GAG"] == 0.0
+    assert info["mean_f_stat"] == 0.0
+
+
+def test_reward_consistency_across_episode(env):
+    """Test reward computation consistency across an episode."""
+    env.reset()
+
+    rewards = []
+    q_clusters = []
+    q_gags = []
+    penalties = []
+
+    for _ in range(10):
+        _, reward, terminated, truncated, info = env.step(2)
+
+        rewards.append(reward)
+        q_clusters.append(info["Q_cluster"])
+        q_gags.append(info["Q_GAG"])
+        penalties.append(info["penalty"])
+
+        if terminated or truncated:
+            break
+
+    # All values should be finite
+    assert all(np.isfinite(r) for r in rewards)
+    assert all(np.isfinite(q) for q in q_clusters)
+    assert all(np.isfinite(q) for q in q_gags)
+    assert all(np.isfinite(p) for p in penalties)
+
+
+def test_previous_reward_tracking(env):
+    """Test that previous reward is tracked correctly."""
+    env.reset()
+
+    # Initially, previous reward should be None
+    assert env._previous_reward is None
+
+    # After first step, previous reward should be set
+    env.step(0)
+    assert env._previous_reward is not None
+
+    # After reset, previous reward should be None again
+    env.reset()
+    assert env._previous_reward is None

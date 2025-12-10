@@ -7,6 +7,20 @@
       show_source: true
       heading_level: 3
 
+## RewardCalculator
+
+::: rl_sc_cluster_utils.environment.RewardCalculator
+    options:
+      show_source: true
+      heading_level: 3
+
+## RewardNormalizer
+
+::: rl_sc_cluster_utils.environment.RewardNormalizer
+    options:
+      show_source: true
+      heading_level: 3
+
 ## ActionExecutor
 
 ::: rl_sc_cluster_utils.environment.ActionExecutor
@@ -23,6 +37,7 @@ The `ClusteringEnv` class is a Gymnasium-compatible reinforcement learning envir
 - **Gymnasium Compliance**: Fully compatible with the Gymnasium API
 - **35-Dimensional State Space**: Encodes clustering state with global metrics, quality metrics, and GAG enrichment
 - **5 Discrete Actions**: Split, merge, re-cluster (up/down), and accept
+- **Composite Reward**: Q_cluster + Q_GAG - Penalty (Stage 4 complete)
 - **Episodic Learning**: Episodes terminate on Accept action or max steps
 - **Configurable**: Optional state/reward normalization
 
@@ -35,18 +50,32 @@ from rl_sc_cluster_utils.environment import ClusteringEnv
 
 # Create mock data
 adata = AnnData(X=np.random.randn(100, 50))
+adata.var_names = [f"gene_{i}" for i in range(50)]
+
+# Define gene sets
+gene_sets = {
+    "set1": ["gene_0", "gene_1", "gene_2"],
+    "set2": ["gene_10", "gene_11", "gene_12"],
+}
 
 # Initialize environment
 env = ClusteringEnv(
     adata=adata,
+    gene_sets=gene_sets,
     max_steps=15,
     normalize_state=False,
-    normalize_rewards=False
+    normalize_rewards=True  # Default: enabled for stable training
 )
 
 # Use the environment
 state, info = env.reset()
 state, reward, terminated, truncated, info = env.step(0)
+
+# Access reward components
+print(f"Reward: {reward:.4f}")
+print(f"Q_cluster: {info['Q_cluster']:.4f}")
+print(f"Q_GAG: {info['Q_GAG']:.4f}")
+print(f"Penalty: {info['penalty']:.4f}")
 ```
 
 ## State Space
@@ -85,9 +114,9 @@ R = α·Q_cluster + β·Q_GAG - δ·Penalty
 ```
 
 Where:
-- `Q_cluster`: Clustering quality (silhouette, modularity, balance)
-- `Q_GAG`: GAG enrichment separation (ANOVA F-stat, mutual info)
-- `Penalty`: Degenerate states, quality degradation, bounds violations
+- `Q_cluster = 0.5·silhouette + 0.3·modularity + 0.2·balance`
+- `Q_GAG = mean(log1p(f_stat) / 10.0)` across gene sets
+- `Penalty = degenerate_penalty + singleton_penalty + bounds_penalty`
 
 Default weights: α=0.6, β=0.4, δ=1.0
 
@@ -95,17 +124,21 @@ See [Reward Calculation](../environment/reward_calculation.md) for details.
 
 ## Methods
 
-### `__init__(adata, max_steps=15, normalize_state=False, normalize_rewards=False, render_mode=None)`
+### `__init__(adata, gene_sets=None, max_steps=15, normalize_state=False, normalize_rewards=False, render_mode=None, reward_alpha=0.6, reward_beta=0.4, reward_delta=1.0)`
 
 Initialize the environment.
 
 **Parameters:**
 
 - `adata` (AnnData): Annotated data object with single-cell data
+- `gene_sets` (dict, optional): Dictionary mapping gene set names to gene lists
 - `max_steps` (int): Maximum steps per episode (default: 15)
 - `normalize_state` (bool): Whether to normalize state vector (default: False)
-- `normalize_rewards` (bool): Whether to normalize rewards (default: False)
+- `normalize_rewards` (bool): Whether to normalize rewards (default: True)
 - `render_mode` (str, optional): Render mode for visualization
+- `reward_alpha` (float): Weight for Q_cluster (default: 0.6)
+- `reward_beta` (float): Weight for Q_GAG (default: 0.4)
+- `reward_delta` (float): Weight for penalty (default: 1.0)
 
 **Returns:** ClusteringEnv instance
 
@@ -134,7 +167,7 @@ Execute one step in the environment.
 **Returns:**
 
 - `state` (np.ndarray): Next state vector (35 dimensions)
-- `reward` (float): Reward for the action (currently 0.0 placeholder)
+- `reward` (float): Composite reward (may be normalized if enabled)
 - `terminated` (bool): Whether episode is terminated (Accept action)
 - `truncated` (bool): Whether episode is truncated (max steps)
 - `info` (dict): Additional information including:
@@ -144,6 +177,15 @@ Execute one step in the environment.
   - `no_change` (bool): Whether action had no effect
   - `n_clusters` (int): Number of clusters after action
   - `resolution` (float): Current resolution after action
+  - `raw_reward` (float): Reward before normalization
+  - `Q_cluster` (float): Clustering quality score
+  - `Q_GAG` (float): GAG enrichment score
+  - `penalty` (float): Total penalty
+  - `silhouette` (float): Silhouette score
+  - `modularity` (float): Graph modularity
+  - `balance` (float): Cluster balance
+  - `n_singletons` (int): Number of singleton clusters
+  - `mean_f_stat` (float): Mean F-statistic across gene sets
 
 ### `render()`
 
@@ -187,12 +229,24 @@ Current Leiden clustering resolution.
 
 **Type:** float
 
+### `reward_calculator`
+
+RewardCalculator instance for computing rewards.
+
+**Type:** RewardCalculator
+
+### `reward_normalizer`
+
+RewardNormalizer instance (if `normalize_rewards=True`).
+
+**Type:** Optional[RewardNormalizer]
+
 ## Usage Examples
 
 ### Basic Episode
 
 ```python
-env = ClusteringEnv(adata)
+env = ClusteringEnv(adata, gene_sets=gene_sets)
 state, info = env.reset()
 
 done = False
@@ -205,6 +259,36 @@ while not done:
     done = terminated or truncated
 
 print(f"Total reward: {total_reward}")
+print(f"Final Q_cluster: {info['Q_cluster']:.4f}")
+```
+
+### With Reward Normalization
+
+```python
+env = ClusteringEnv(
+    adata,
+    gene_sets=gene_sets,
+    normalize_rewards=True  # Enable normalization
+)
+state, info = env.reset()
+
+for _ in range(10):
+    state, reward, terminated, truncated, info = env.step(2)
+    print(f"Normalized reward: {reward:.4f}, Raw: {info['raw_reward']:.4f}")
+    if terminated or truncated:
+        break
+```
+
+### Custom Reward Weights
+
+```python
+env = ClusteringEnv(
+    adata,
+    gene_sets=gene_sets,
+    reward_alpha=0.5,   # Clustering quality weight
+    reward_beta=0.3,    # GAG enrichment weight
+    reward_delta=0.8    # Penalty weight
+)
 ```
 
 ### With PPO Training
@@ -212,7 +296,7 @@ print(f"Total reward: {total_reward}")
 ```python
 from stable_baselines3 import PPO
 
-env = ClusteringEnv(adata)
+env = ClusteringEnv(adata, gene_sets=gene_sets)
 model = PPO("MlpPolicy", env, verbose=1)
 model.learn(total_timesteps=50000)
 ```
@@ -220,7 +304,7 @@ model.learn(total_timesteps=50000)
 ### Multiple Episodes
 
 ```python
-env = ClusteringEnv(adata, max_steps=15)
+env = ClusteringEnv(adata, gene_sets=gene_sets, max_steps=15)
 
 for episode in range(10):
     state, info = env.reset()
@@ -233,12 +317,12 @@ for episode in range(10):
         episode_reward += reward
         done = terminated or truncated
 
-    print(f"Episode {episode}: reward={episode_reward}")
+    print(f"Episode {episode}: reward={episode_reward:.4f}")
 ```
 
 ## Current Implementation Status
 
-**Stage 3 Complete**:
+**Stage 4 Complete**:
 - ✅ **State**: Real 35-dimensional state vector computed from clustering metrics
 - ✅ **Actions**: All 5 actions fully implemented and functional
   - Action 0: Split worst cluster (by silhouette)
@@ -246,13 +330,18 @@ for episode in range(10):
   - Action 2: Re-cluster resolution +0.1 (with clamping)
   - Action 3: Re-cluster resolution -0.1 (with clamping)
   - Action 4: Accept (terminate episode)
-- 🔲 **Reward**: Returns 0.0 placeholder (will compute composite reward in Stage 4)
+- ✅ **Reward**: Composite reward function implemented
+  - Q_cluster: Silhouette + modularity + balance
+  - Q_GAG: Normalized F-statistics across gene sets
+  - Penalty: Degenerate states, singletons, bounds
+- ✅ **Normalization**: Optional reward normalization with running statistics
 
 **Next Steps**:
-- Stage 4: Implement composite reward function
+- Stage 5: Training and evaluation
 
 ## See Also
 
 - [Development Plan](../environment/development_plan.md) - Full implementation roadmap
 - [Design Decisions](../environment/design_decisions.md) - Rationale for key choices
+- [Reward Calculation](../environment/reward_calculation.md) - Detailed reward documentation
 - [Testing Guide](../dev/testing.md) - How to test the environment
