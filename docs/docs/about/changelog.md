@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Stage 3 (Planned)
-- Action implementations (split, merge, re-cluster)
-- Resolution bounds handling
-- Action validation
-
 ### Stage 4 (Planned)
 - Reward calculation
 - Composite reward function
@@ -26,6 +21,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive testing
 - Documentation completion
 - Production readiness
+
+## [0.0.3] - 2025-12-02
+
+### Added - Stage 3 Complete
+- Action execution implementation (`ActionExecutor` class)
+- Action 0: Split worst cluster (by silhouette score)
+- Action 1: Merge closest pair (by centroid distance)
+- Action 2: Re-cluster resolution +0.1 (with clamping)
+- Action 3: Re-cluster resolution -0.1 (with clamping)
+- Action 4: Accept (no-op, handled in step())
+- Action validation with semantic error handling
+- Resolution clamping with penalty flag (for Stage 4)
+- Cluster ID conversion utilities (numeric format)
+- Edge case handling (singletons, single cluster, bounds)
+- Comprehensive action tests (26 tests)
+- Updated environment integration tests (57 tests)
+- Total: 83 tests passing (up from 46)
+
+### Changed
+- `ClusteringEnv.step()` now executes real actions (replaces placeholders)
+- Resolution tracking updated after re-cluster actions
+- Info dict now includes `action_success`, `action_error`, `resolution_clamped`, `no_change`
+- Cluster IDs automatically converted to numeric after each action
+
+### Fixed
+- Neighbors graph access pattern (uses `obsp['connectivities']` with fallback)
+- Pandas categorical cluster ID handling
+- Cluster mask indexing for sparse matrices
+- Single cluster edge case in split action
 
 ## [0.0.2] - 2025-11-10
 

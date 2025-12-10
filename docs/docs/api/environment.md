@@ -7,6 +7,13 @@
       show_source: true
       heading_level: 3
 
+## ActionExecutor
+
+::: rl_sc_cluster_utils.environment.ActionExecutor
+    options:
+      show_source: true
+      heading_level: 3
+
 ## Overview
 
 The `ClusteringEnv` class is a Gymnasium-compatible reinforcement learning environment for scRNA-seq cluster refinement.
@@ -127,10 +134,16 @@ Execute one step in the environment.
 **Returns:**
 
 - `state` (np.ndarray): Next state vector (35 dimensions)
-- `reward` (float): Reward for the action
+- `reward` (float): Reward for the action (currently 0.0 placeholder)
 - `terminated` (bool): Whether episode is terminated (Accept action)
 - `truncated` (bool): Whether episode is truncated (max steps)
-- `info` (dict): Additional information
+- `info` (dict): Additional information including:
+  - `action_success` (bool): Whether action executed successfully
+  - `action_error` (str or None): Error message if action failed
+  - `resolution_clamped` (bool): Whether resolution was clamped to bounds
+  - `no_change` (bool): Whether action had no effect
+  - `n_clusters` (int): Number of clusters after action
+  - `resolution` (float): Current resolution after action
 
 ### `render()`
 
@@ -225,13 +238,17 @@ for episode in range(10):
 
 ## Current Implementation Status
 
-**Stage 2 Complete**:
+**Stage 3 Complete**:
 - ✅ **State**: Real 35-dimensional state vector computed from clustering metrics
-- 🔲 **Actions**: No-op placeholders (will modify clustering in Stage 3)
+- ✅ **Actions**: All 5 actions fully implemented and functional
+  - Action 0: Split worst cluster (by silhouette)
+  - Action 1: Merge closest pair (by centroid distance)
+  - Action 2: Re-cluster resolution +0.1 (with clamping)
+  - Action 3: Re-cluster resolution -0.1 (with clamping)
+  - Action 4: Accept (terminate episode)
 - 🔲 **Reward**: Returns 0.0 placeholder (will compute composite reward in Stage 4)
 
 **Next Steps**:
-- Stage 3: Implement actions (split, merge, re-cluster)
 - Stage 4: Implement composite reward function
 
 ## See Also

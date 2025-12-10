@@ -8,6 +8,7 @@ from gymnasium import spaces
 import numpy as np
 import scanpy as sc
 
+from .actions import ActionExecutor
 from .state import StateExtractor
 
 
@@ -60,6 +61,13 @@ class ClusteringEnv(gym.Env):
         # Initialize state extractor
         self.state_extractor = StateExtractor(
             self.adata, self.gene_sets, normalize=self.normalize_state
+        )
+
+        # Initialize action executor
+        self.action_executor = ActionExecutor(
+            self.adata,
+            min_resolution=0.1,
+            max_resolution=2.0,
         )
 
         # Action space: 5 discrete actions
@@ -131,6 +139,11 @@ class ClusteringEnv(gym.Env):
         )
         self._initial_clustering_done = True
 
+        # Ensure cluster IDs are numeric
+        from .actions import convert_cluster_ids_to_numeric
+
+        convert_cluster_ids_to_numeric(self.adata)
+
         # Extract state using StateExtractor
         self.state = self.state_extractor.extract_state(
             self.adata, self.current_step, self.max_steps
@@ -169,13 +182,16 @@ class ClusteringEnv(gym.Env):
         info : dict
             Additional information
         """
-        # Validate action
+        # Validate action (Gymnasium compliance: raise ValueError for out-of-bounds)
         if not self.action_space.contains(action):
             raise ValueError(f"Invalid action: {action}. Must be in range [0, 4].")
 
-        # Placeholder: no-op actions for now (will be implemented in Stage 3)
-        # For Stage 2, we just extract the state after the (non-)action
-        # This allows us to test state extraction without action implementation
+        # Execute action
+        action_result = self.action_executor.execute(action, self.current_resolution)
+
+        # Update resolution if it changed
+        if action_result["new_resolution"] != self.current_resolution:
+            self.current_resolution = action_result["new_resolution"]
 
         # Increment step counter
         self.current_step += 1
@@ -187,6 +203,7 @@ class ClusteringEnv(gym.Env):
         self.state = next_state
 
         # Placeholder: constant reward (will be implemented in Stage 4)
+        # TODO: Use action_result["resolution_clamped"] for penalty in Stage 4
         reward = 0.0
 
         # Check termination conditions
@@ -205,6 +222,10 @@ class ClusteringEnv(gym.Env):
             "truncated": truncated,
             "resolution": self.current_resolution,
             "n_clusters": n_clusters,
+            "action_success": action_result["success"],
+            "action_error": action_result["error"],
+            "resolution_clamped": action_result["resolution_clamped"],
+            "no_change": action_result["no_change"],
         }
 
         return next_state, reward, terminated, truncated, info
