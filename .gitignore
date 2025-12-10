@@ -208,3 +208,13 @@ cython_debug/
 .cursor/
 # documents:
 docs/docs/Review of scRNA-seq data clustering.pdf
+
+# photos
+*.png
+
+#claude
+CLAUDE.md
+
+docs/docs/Deciphering normal and cancer stem cell .pdf
+docs/docs/scvi_model_docs.pdf
+docs/docs/Work_flow_phases.md
