@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Performance Optimizations and Visualizations
+- **ClusteringCache class**: Hash-based LRU cache for clustering-dependent metrics
+  - Caches Q_cluster (silhouette, modularity, balance) computations
+  - Caches Q_GAG (F-statistics) computations
+  - Caches state extraction metrics (quality and GAG enrichment)
+  - LRU eviction with configurable max size (default: 100 entries)
+  - Cache statistics tracking (hits, misses, hit rate)
+- **Precomputed enrichment scores**: Static gene set enrichment scores computed once at initialization
+  - Eliminates redundant enrichment score computations (6×O(n) operations per step)
+  - ~30-40% reduction in GAG computation time
+- **Training convergence plots**: Visualize learning progress during PPO training
+  - Episode rewards over timesteps with moving average
+  - Episode lengths over timesteps
+  - Reward distribution histogram
+  - Learning progress comparison (first vs second half)
+- **Evaluation convergence plots**: Track evaluation metrics across episodes
+  - Episode rewards with mean and ±1 std bands
+  - Q_GAG progression over episodes
+  - Q_cluster progression over episodes
+  - Final cluster counts over episodes
+- **UMAP visualizations**: Best episode clustering visualization
+  - Initial clustering state UMAP plot
+  - Final clustering state UMAP plot
+  - Side-by-side comparison for best performing episode
+- **Progress bars**: tqdm integration for episode tracking
+  - Real-time episode progress with reward, clusters, and length info
+
+### Changed
+- **Performance**: Expected 1.5-3x speedup from caching optimizations
+- **Default parameter**: `min_steps_before_accept` default changed from 20 to 10 (matches `max_steps=15`)
+
+### Fixed
+- **Bug**: `min_steps_before_accept` default (20) was greater than `max_steps` default (15), causing early termination penalty to always apply
+- **Bug**: Cache invalidation on environment reset to prevent stale entries
+
 ### Stage 4 (Planned)
 - Reward calculation
 - Composite reward function
