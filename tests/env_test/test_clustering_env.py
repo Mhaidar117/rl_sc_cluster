@@ -39,7 +39,13 @@ def gene_sets():
 @pytest.fixture
 def env(mock_adata, gene_sets):
     """Create a ClusteringEnv instance for testing."""
-    return ClusteringEnv(adata=mock_adata, gene_sets=gene_sets, max_steps=15)
+    return ClusteringEnv(
+        adata=mock_adata,
+        gene_sets=gene_sets,
+        max_steps=15,
+        normalize_rewards=False,  # Disable normalization for deterministic testing
+        reward_mode="absolute",  # Use absolute mode for deterministic testing (shaped mode accumulates baseline)
+    )
 
 
 def test_gymnasium_compliance(env):
