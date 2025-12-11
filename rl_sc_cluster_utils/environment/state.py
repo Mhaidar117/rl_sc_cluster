@@ -148,11 +148,14 @@ class StateExtractor:
         metrics : np.ndarray
             [silhouette, modularity, balance]
         """
-        # Check cache first
-        cluster_labels = adata.obs["clusters"]
-        cached = self._cache.get(cluster_labels, "quality_metrics")
-        if cached is not None:
-            return cached["metrics"]
+        # Check cache first (only if clusters exist)
+        if "clusters" in adata.obs:
+            cluster_labels = adata.obs["clusters"]
+            cached = self._cache.get(cluster_labels, "quality_metrics")
+            if cached is not None:
+                return cached["metrics"]
+        else:
+            cluster_labels = None
 
         # Use shared utility function
         silhouette, modularity, balance = compute_clustering_quality_metrics(
@@ -164,8 +167,9 @@ class StateExtractor:
 
         metrics = np.array([silhouette, modularity, balance], dtype=np.float64)
 
-        # Cache result
-        self._cache.set(cluster_labels, "quality_metrics", {"metrics": metrics})
+        # Cache result (only if clusters exist)
+        if cluster_labels is not None:
+            self._cache.set(cluster_labels, "quality_metrics", {"metrics": metrics})
 
         return metrics
 

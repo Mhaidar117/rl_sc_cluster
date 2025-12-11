@@ -270,11 +270,14 @@ class RewardCalculator:
         info : dict
             Individual component values, including raw silhouette
         """
-        # Check cache first
-        cluster_labels = adata.obs["clusters"]
-        cached = self._cache.get(cluster_labels, "q_cluster")
-        if cached is not None:
-            return cached["Q_cluster"], cached["info"]
+        # Check cache first (only if clusters exist)
+        if "clusters" in adata.obs:
+            cluster_labels = adata.obs["clusters"]
+            cached = self._cache.get(cluster_labels, "q_cluster")
+            if cached is not None:
+                return cached["Q_cluster"], cached["info"]
+        else:
+            cluster_labels = None
 
         # Get quality metrics from shared utility
         silhouette, modularity, balance = compute_clustering_quality_metrics(
@@ -298,8 +301,9 @@ class RewardCalculator:
             "balance": balance,
         }
 
-        # Cache result
-        self._cache.set(cluster_labels, "q_cluster", {"Q_cluster": Q_cluster, "info": info})
+        # Cache result (only if clusters exist)
+        if cluster_labels is not None:
+            self._cache.set(cluster_labels, "q_cluster", {"Q_cluster": Q_cluster, "info": info})
 
         return Q_cluster, info
 
