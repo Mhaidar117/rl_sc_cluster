@@ -198,6 +198,7 @@ def compute_gag_enrichment_metrics(
     adata: AnnData,
     gene_sets: Dict[str, List[str]],
     cluster_key: str = "clusters",
+    precomputed_enrichment: Optional[Dict[str, np.ndarray]] = None,
 ) -> Dict[str, Dict[str, float]]:
     """
     Compute GAG enrichment metrics for all gene sets.
@@ -216,6 +217,9 @@ def compute_gag_enrichment_metrics(
         Dictionary mapping gene set names to lists of gene names
     cluster_key : str, optional
         Key for cluster labels in adata.obs (default: "clusters")
+    precomputed_enrichment : dict, optional
+        Precomputed enrichment scores per gene set. If provided, uses these
+        instead of recomputing from expression matrix (default: None)
 
     Returns
     -------
@@ -256,8 +260,11 @@ def compute_gag_enrichment_metrics(
             metrics[gene_set_name] = set_metrics
             continue
 
-        # Compute enrichment scores
-        enrichment_scores = compute_enrichment_scores(adata, gene_set)
+        # Use precomputed enrichment scores if available, otherwise compute
+        if precomputed_enrichment is not None and gene_set_name in precomputed_enrichment:
+            enrichment_scores = precomputed_enrichment[gene_set_name]
+        else:
+            enrichment_scores = compute_enrichment_scores(adata, gene_set)
 
         if enrichment_scores is None:
             metrics[gene_set_name] = set_metrics

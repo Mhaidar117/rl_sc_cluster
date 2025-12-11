@@ -5,8 +5,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from anndata import AnnData
 import numpy as np
 
+from .cache import ClusteringCache
 from .utils import (
     compute_clustering_quality_metrics,
+    compute_enrichment_scores,
     compute_gag_enrichment_metrics,
     compute_global_clustering_metrics,
     get_embeddings,
@@ -53,7 +55,7 @@ class RewardCalculator:
     early_termination_penalty : float, optional
         Penalty for Accept action before minimum steps (default: -5.0)
     min_steps_before_accept : int, optional
-        Minimum steps before Accept action is allowed without penalty (default: 20)
+        Minimum steps before Accept action is allowed without penalty (default: 10)
 
     Examples
     --------
@@ -75,7 +77,7 @@ class RewardCalculator:
         exploration_bonus: float = 0.2,
         silhouette_shift: float = 0.5,
         early_termination_penalty: float = -5.0,
-        min_steps_before_accept: int = 20,
+        min_steps_before_accept: int = 10,
     ) -> None:
         self.adata = adata
         self.gene_sets = gene_sets or {}
@@ -95,6 +97,16 @@ class RewardCalculator:
 
         # Check if neighbors graph exists
         self._neighbors_computed = "neighbors" in adata.uns
+
+        # Precompute static enrichment scores (independent of clustering)
+        self._precomputed_enrichment: Dict[str, np.ndarray] = {}
+        for gene_set_name, gene_set in self.gene_sets.items():
+            enrichment = compute_enrichment_scores(adata, gene_set)
+            if enrichment is not None:
+                self._precomputed_enrichment[gene_set_name] = enrichment
+
+        # Initialize cache for clustering-dependent metrics
+        self._cache = ClusteringCache(max_size=100)
 
         # Internal state for improvement and shaped modes
         self._previous_potential: Optional[float] = None
@@ -228,11 +240,14 @@ class RewardCalculator:
         Reset internal state for new episode.
 
         Clears previous potential and baseline tracking.
+        Also clears cache since clustering state changes on reset.
         """
         self._previous_potential = None
         # Keep baseline across episodes for shaped mode (or reset if desired)
         # self._reward_history = []
         # self._baseline = 0.0
+        # Clear cache on reset since clustering state changes
+        self._cache.clear()
 
     def _compute_q_cluster(self, adata: AnnData) -> Tuple[float, Dict[str, float]]:
         """
@@ -255,6 +270,12 @@ class RewardCalculator:
         info : dict
             Individual component values, including raw silhouette
         """
+        # Check cache first
+        cluster_labels = adata.obs["clusters"]
+        cached = self._cache.get(cluster_labels, "q_cluster")
+        if cached is not None:
+            return cached["Q_cluster"], cached["info"]
+
         # Get quality metrics from shared utility
         silhouette, modularity, balance = compute_clustering_quality_metrics(
             adata,
@@ -276,6 +297,9 @@ class RewardCalculator:
             "modularity": modularity,
             "balance": balance,
         }
+
+        # Cache result
+        self._cache.set(cluster_labels, "q_cluster", {"Q_cluster": Q_cluster, "info": info})
 
         return Q_cluster, info
 
@@ -301,8 +325,19 @@ class RewardCalculator:
         if not self.gene_sets:
             return 0.0, {"mean_f_stat": 0.0, "f_stats": {}}
 
-        # Get GAG metrics from shared utility
-        gag_metrics = compute_gag_enrichment_metrics(adata, self.gene_sets, cluster_key="clusters")
+        # Check cache first
+        cluster_labels = adata.obs["clusters"]
+        cached = self._cache.get(cluster_labels, "q_gag")
+        if cached is not None:
+            return cached["Q_GAG"], cached["info"]
+
+        # Get GAG metrics from shared utility with precomputed enrichment scores
+        gag_metrics = compute_gag_enrichment_metrics(
+            adata,
+            self.gene_sets,
+            cluster_key="clusters",
+            precomputed_enrichment=self._precomputed_enrichment,
+        )
 
         # Extract F-statistics
         f_stats = {}
@@ -328,6 +363,9 @@ class RewardCalculator:
             "mean_f_stat": mean_f_stat,
             "f_stats": f_stats,
         }
+
+        # Cache result
+        self._cache.set(cluster_labels, "q_gag", {"Q_GAG": Q_GAG, "info": info})
 
         return Q_GAG, info
 
@@ -478,7 +516,9 @@ class RewardNormalizer:
         """
         Update statistics and return normalized reward.
 
-        Convenience method that combines update() and normalize().
+        Normalizes using statistics computed BEFORE adding the current reward,
+        then updates statistics with the new reward. This ensures the first
+        reward is normalized correctly (not to zero).
 
         Parameters
         ----------
@@ -488,10 +528,13 @@ class RewardNormalizer:
         Returns
         -------
         normalized : float
-            Normalized reward
+            Normalized reward (using statistics before update)
         """
+        # Normalize using current statistics (before adding this reward)
+        normalized = self.normalize(reward)
+        # Then update statistics with the new reward
         self.update(reward)
-        return self.normalize(reward)
+        return normalized
 
     def reset(self) -> None:
         """

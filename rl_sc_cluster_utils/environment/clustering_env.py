@@ -67,7 +67,7 @@ class ClusteringEnv(gym.Env):
     early_termination_penalty : float, optional
         Penalty for Accept action before minimum steps (default: -5.0)
     min_steps_before_accept : int, optional
-        Minimum steps before Accept action is allowed without penalty (default: 20)
+        Minimum steps before Accept action is allowed without penalty (default: 10)
     """
 
     metadata = {"render_modes": ["human", "rgb_array"]}
@@ -89,7 +89,7 @@ class ClusteringEnv(gym.Env):
         exploration_bonus: float = 0.2,
         silhouette_shift: float = 0.5,
         early_termination_penalty: float = -5.0,
-        min_steps_before_accept: int = 20,
+        min_steps_before_accept: int = 10,
     ) -> None:
         super().__init__()
 

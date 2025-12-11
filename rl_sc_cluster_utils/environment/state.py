@@ -6,6 +6,7 @@ from anndata import AnnData
 import numpy as np
 from scipy.stats import entropy
 
+from .cache import ClusteringCache
 from .utils import (
     compute_clustering_quality_metrics,
     compute_enrichment_scores,
@@ -54,6 +55,9 @@ class StateExtractor:
         # Check if neighbors graph exists
         if "neighbors" in adata.uns:
             self._neighbors_computed = True
+
+        # Initialize cache for clustering-dependent metrics
+        self._cache = ClusteringCache(max_size=100)
 
         # Normalization ranges (will be computed if normalize=True)
         self._state_min = None
@@ -144,6 +148,12 @@ class StateExtractor:
         metrics : np.ndarray
             [silhouette, modularity, balance]
         """
+        # Check cache first
+        cluster_labels = adata.obs["clusters"]
+        cached = self._cache.get(cluster_labels, "quality_metrics")
+        if cached is not None:
+            return cached["metrics"]
+
         # Use shared utility function
         silhouette, modularity, balance = compute_clustering_quality_metrics(
             adata,
@@ -152,7 +162,12 @@ class StateExtractor:
             cluster_key="clusters",
         )
 
-        return np.array([silhouette, modularity, balance], dtype=np.float64)
+        metrics = np.array([silhouette, modularity, balance], dtype=np.float64)
+
+        # Cache result
+        self._cache.set(cluster_labels, "quality_metrics", {"metrics": metrics})
+
+        return metrics
 
     def _compute_gag_enrichment(self, adata: AnnData) -> np.ndarray:
         """
@@ -178,6 +193,12 @@ class StateExtractor:
         while len(gene_set_names) < 7:
             gene_set_names.append(f"empty_set_{len(gene_set_names)}")
 
+        # Check cache first
+        cluster_labels = adata.obs["clusters"]
+        cached = self._cache.get(cluster_labels, "gag_enrichment")
+        if cached is not None:
+            return cached["metrics"]
+
         # Compute metrics using shared utility
         gag_metrics = compute_gag_enrichment_metrics(adata, self.gene_sets, cluster_key="clusters")
 
@@ -191,6 +212,9 @@ class StateExtractor:
                 metrics[base_idx + 1] = set_metrics["max"]
                 metrics[base_idx + 2] = set_metrics["f_stat"]
                 metrics[base_idx + 3] = set_metrics["mi"]
+
+        # Cache result
+        self._cache.set(cluster_labels, "gag_enrichment", {"metrics": metrics})
 
         return metrics
 

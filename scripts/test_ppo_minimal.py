@@ -15,6 +15,7 @@ sys.path.insert(0, str(project_root))
 
 try:
     from stable_baselines3 import PPO
+    from stable_baselines3.common.callbacks import BaseCallback
     from stable_baselines3.common.vec_env import DummyVecEnv
     SB3_AVAILABLE = True
 except ImportError:
@@ -25,6 +26,7 @@ except ImportError:
 
 import scanpy as sc
 import numpy as np
+from tqdm import tqdm
 from rl_sc_cluster_utils.environment import ClusteringEnv
 
 # GAG gene sets
@@ -230,6 +232,196 @@ def plot_trajectories(all_step_data, output_path):
     print(f"[PLOT] ✓ Saved to: {output_path}")
 
 
+def plot_best_episode_umaps(adata, best_episode_num, initial_clusters, final_clusters, output_path):
+    """
+    Plot UMAP visualizations for the best episode: initial and final clustering states.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data object
+    best_episode_num : int
+        Episode number (1-indexed) of the best episode
+    initial_clusters : np.ndarray
+        Initial clustering labels for the best episode
+    final_clusters : np.ndarray
+        Final clustering labels for the best episode
+    output_path : str
+        Path to save the plot
+    """
+    print(f"[PLOT] Creating UMAP plots for best episode {best_episode_num}...")
+
+    # Ensure UMAP coordinates exist
+    if 'X_umap' not in adata.obsm:
+        print("[PLOT] Computing UMAP coordinates...")
+        if 'X_scvi' in adata.obsm:
+            sc.tl.umap(adata, use_rep='X_scvi')
+        else:
+            sc.tl.umap(adata)
+
+    # Create figure with two subplots side by side
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Temporarily store original clusters
+    original_clusters = adata.obs['clusters'].copy()
+
+    # Plot 1: Initial clustering
+    adata.obs['clusters'] = initial_clusters.astype(str)
+    sc.pl.umap(adata, color='clusters', ax=axes[0], show=False,
+               title=f'Episode {best_episode_num}: Initial Clustering',
+               legend_loc='right margin')
+
+    # Plot 2: Final clustering
+    adata.obs['clusters'] = final_clusters.astype(str)
+    sc.pl.umap(adata, color='clusters', ax=axes[1], show=False,
+               title=f'Episode {best_episode_num}: Final Clustering',
+               legend_loc='right margin')
+
+    # Restore original clusters
+    adata.obs['clusters'] = original_clusters
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"[PLOT] ✓ Saved to: {output_path}")
+
+
+class TrainingMetricsCallback(BaseCallback):
+    """Callback to track training metrics during PPO learning."""
+
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.episode_rewards = []
+        self.episode_lengths = []
+        self.timesteps = []
+
+    def _on_step(self) -> bool:
+        # Get episode statistics from info
+        if 'episode' in self.locals.get('infos', [{}])[0]:
+            ep_info = self.locals['infos'][0]['episode']
+            self.episode_rewards.append(ep_info['r'])
+            self.episode_lengths.append(ep_info['l'])
+            self.timesteps.append(self.num_timesteps)
+        return True
+
+
+def plot_training_convergence(callback, output_path):
+    """Plot training convergence curves."""
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+    # 1. Episode Rewards Over Time
+    if callback.episode_rewards:
+        axes[0, 0].plot(callback.timesteps, callback.episode_rewards, alpha=0.6, label='Episode Reward')
+        # Moving average
+        window = min(10, len(callback.episode_rewards) // 4)
+        if window > 1:
+            moving_avg = np.convolve(callback.episode_rewards,
+                                     np.ones(window)/window, mode='valid')
+            axes[0, 0].plot(callback.timesteps[window-1:], moving_avg,
+                           'r-', linewidth=2, label=f'Moving Avg ({window})')
+        axes[0, 0].set_xlabel('Training Timesteps')
+        axes[0, 0].set_ylabel('Episode Reward')
+        axes[0, 0].set_title('Training: Episode Rewards')
+        axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3)
+
+    # 2. Episode Lengths
+    if callback.episode_lengths:
+        axes[0, 1].plot(callback.timesteps, callback.episode_lengths, alpha=0.6)
+        axes[0, 1].set_xlabel('Training Timesteps')
+        axes[0, 1].set_ylabel('Episode Length')
+        axes[0, 1].set_title('Training: Episode Lengths')
+        axes[0, 1].grid(True, alpha=0.3)
+
+    # 3. Reward Distribution (Histogram)
+    if callback.episode_rewards:
+        axes[1, 0].hist(callback.episode_rewards, bins=20, edgecolor='black', alpha=0.7)
+        axes[1, 0].axvline(np.mean(callback.episode_rewards), color='r',
+                          linestyle='--', label=f'Mean: {np.mean(callback.episode_rewards):.2f}')
+        axes[1, 0].set_xlabel('Episode Reward')
+        axes[1, 0].set_ylabel('Frequency')
+        axes[1, 0].set_title('Training: Reward Distribution')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+
+    # 4. Learning Curve (First vs Last Half)
+    if len(callback.episode_rewards) >= 4:
+        mid = len(callback.episode_rewards) // 2
+        first_half = callback.episode_rewards[:mid]
+        second_half = callback.episode_rewards[mid:]
+
+        axes[1, 1].boxplot([first_half, second_half],
+                          labels=['First Half', 'Second Half'])
+        axes[1, 1].set_ylabel('Episode Reward')
+        axes[1, 1].set_title('Training: Learning Progress')
+        axes[1, 1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"[PLOT] ✓ Training convergence plot saved to: {output_path}")
+
+
+def plot_evaluation_convergence(episode_metrics, output_path):
+    """Plot evaluation episode convergence."""
+    df = pd.DataFrame(episode_metrics)
+
+    # Group by episode
+    episode_rewards = df.groupby('episode')['reward'].sum()
+    episode_q_gag = df.groupby('episode')['Q_GAG'].last()
+    episode_q_cluster = df.groupby('episode')['Q_cluster'].last()
+    episode_clusters = df.groupby('episode')['n_clusters'].last()
+
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+    # 1. Episode Rewards
+    episodes = episode_rewards.index
+    axes[0, 0].plot(episodes, episode_rewards.values, 'o-', linewidth=2, markersize=6)
+    axes[0, 0].axhline(episode_rewards.mean(), color='r', linestyle='--',
+                       label=f'Mean: {episode_rewards.mean():.2f}')
+    axes[0, 0].fill_between(episodes,
+                           episode_rewards.mean() - episode_rewards.std(),
+                           episode_rewards.mean() + episode_rewards.std(),
+                           alpha=0.2, label=f'±1 std')
+    axes[0, 0].set_xlabel('Evaluation Episode')
+    axes[0, 0].set_ylabel('Total Episode Reward')
+    axes[0, 0].set_title('Evaluation: Episode Rewards')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+
+    # 2. Q_GAG Over Episodes
+    axes[0, 1].plot(episodes, episode_q_gag.values, 'o-', linewidth=2,
+                   markersize=6, color='orange', label='Q_GAG')
+    axes[0, 1].set_xlabel('Evaluation Episode')
+    axes[0, 1].set_ylabel('Final Q_GAG')
+    axes[0, 1].set_title('Evaluation: GAG Enrichment')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+
+    # 3. Q_cluster Over Episodes
+    axes[1, 0].plot(episodes, episode_q_cluster.values, 'o-', linewidth=2,
+                   markersize=6, color='blue', label='Q_cluster')
+    axes[1, 0].set_xlabel('Evaluation Episode')
+    axes[1, 0].set_ylabel('Final Q_cluster')
+    axes[1, 0].set_title('Evaluation: Clustering Quality')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+
+    # 4. Final Clusters
+    axes[1, 1].plot(episodes, episode_clusters.values, 'o-', linewidth=2,
+                   markersize=6, color='green', label='n_clusters')
+    axes[1, 1].set_xlabel('Evaluation Episode')
+    axes[1, 1].set_ylabel('Final Number of Clusters')
+    axes[1, 1].set_title('Evaluation: Cluster Count')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"[PLOT] ✓ Evaluation convergence plot saved to: {output_path}")
+
+
 def make_env(adata, gene_sets):
     """Create environment factory."""
     def _init():
@@ -263,7 +455,7 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
         policy="MlpPolicy",
         env=vec_env,
         learning_rate=3e-4,
-        n_steps=200,    # Increased n_steps
+        n_steps=100,    # Adjusted for smaller dataset
         batch_size=50,
         n_epochs=10,
         gamma=0.99,
@@ -281,15 +473,17 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
     print(f"[PPO] Using shaped reward mode (avoids negative rewards)")
     print(f"[PPO] Training started...", flush=True)
 
+    # Create callback for training metrics
+    training_callback = TrainingMetricsCallback()
+
     training_start = time.time()
-    model.learn(total_timesteps=total_timesteps, progress_bar=True)
+    model.learn(total_timesteps=total_timesteps, progress_bar=True, callback=training_callback)
     training_time = time.time() - training_start
 
     print(f"[PPO] ✓ Training completed in {training_time:.2f} seconds ({training_time/60:.1f} minutes)")
 
     # Now run episodes with trained model to collect metrics
     print(f"\n[COLLECT] Collecting metrics from {num_episodes} episodes...")
-    print(f"[COLLECT] Running episodes...", flush=True)
     print(f"[COLLECT] NOTE: Using RAW rewards (no normalization) for evaluation", flush=True)
 
     # Create environment WITHOUT reward normalization for evaluation
@@ -315,9 +509,20 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
     vec_env = DummyVecEnv([make_eval_env])
     all_step_data = []  # Collect ALL steps from ALL episodes
 
-    for episode in range(num_episodes):
-        print(f"\n[EPISODE {episode+1}/{num_episodes}] Starting...", flush=True)
+    # Store initial and final clustering states for each episode
+    episode_clustering_states = {}  # {episode_num: {'initial': labels, 'final': labels}}
+    episode_rewards = {}  # {episode_num: total_reward}
+
+    # Use tqdm for progress bar
+    episode_pbar = tqdm(range(num_episodes), desc="[COLLECT] Running episodes", unit="episode")
+    for episode in episode_pbar:
         obs = vec_env.reset()
+
+        # Get initial clustering state (after reset, before any steps)
+        eval_env = vec_env.envs[0]
+        initial_clusters = eval_env.adata.obs['clusters'].copy().values
+        episode_clustering_states[episode + 1] = {'initial': initial_clusters}
+
         episode_reward = 0
         episode_length = 0
 
@@ -371,20 +576,28 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
             if done[0]:
                 break
 
-        print(f"[EPISODE {episode+1}/{num_episodes}] Complete: "
-              f"reward={episode_reward:.4f}, length={episode_length}, "
-              f"clusters={last_step_data.get('n_clusters', 0)}, "
-              f"Q_cluster={last_step_data.get('Q_cluster', 0):.4f}, "
-              f"Q_GAG={last_step_data.get('Q_GAG', 0):.4f}, "
-              f"actions={action_counts}", flush=True)
+        # Store final clustering state and episode reward
+        final_clusters = eval_env.adata.obs['clusters'].copy().values
+        episode_clustering_states[episode + 1]['final'] = final_clusters
+        episode_rewards[episode + 1] = episode_reward
 
-    return all_step_data, model
+        # Update progress bar with episode info
+        episode_pbar.set_postfix({
+            'reward': f'{episode_reward:.2f}',
+            'clusters': last_step_data.get('n_clusters', 0),
+            'length': episode_length
+        })
+
+    episode_pbar.close()
+    print(f"[COLLECT] ✓ Completed {num_episodes} episodes")
+
+    return all_step_data, model, episode_clustering_states, episode_rewards, training_callback
 
 
 def main():
     """Main test."""
     print("="*70)
-    print("PPO TEST - 10000 cells, 20 episodes")
+    print("PPO TEST - 100 cells, 5 episodes")
     print("="*70)
 
     data_path = project_root / "data" / "processed" / "human_interneurons.h5ad"
@@ -392,8 +605,8 @@ def main():
         print(f"ERROR: {data_path} not found")
         return 1
 
-    # Load 10000 cells
-    adata = load_subset(data_path, n_cells=10000)
+    # Load 100 cells
+    adata = load_subset(data_path, n_cells=100)
 
     # Create environment
     print(f"\n[ENV] Creating environment...")
@@ -411,11 +624,13 @@ def main():
     print(f"[ENV] ✓ F-stats available: {list(info.get('f_stats', {}).keys())}")
 
     # Run episodes with PPO
-    episode_metrics, model = run_episodes_with_ppo(env, num_episodes=20, total_timesteps=2000)
+    episode_metrics, model, episode_clustering_states, episode_rewards_dict, training_callback = run_episodes_with_ppo(
+        env, num_episodes=5, total_timesteps=500
+    )
 
     # Save metrics
     print(f"\n[SAVE] Saving metrics...")
-    output_dir = project_root / "results" / "ppo_test"
+    output_dir = project_root / "results" / "ppo_test_100c_5ep"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save as CSV
@@ -460,11 +675,38 @@ def main():
     # Plot trajectories
     plot_path = output_dir / "trajectories.png"
     res_plot_path = output_dir / "resolution_clusters.png"
+    training_plot_path = output_dir / "training_convergence.png"
+    eval_plot_path = output_dir / "evaluation_convergence.png"
+    umap_plot_path = output_dir / "best_episode_umaps.png"
+
     try:
         plot_trajectories(episode_metrics, str(plot_path))
         plot_resolution_clusters(episode_metrics, str(res_plot_path))
+
+        # Plot training convergence
+        plot_training_convergence(training_callback, str(training_plot_path))
+
+        # Plot evaluation convergence
+        plot_evaluation_convergence(episode_metrics, str(eval_plot_path))
+
+        # Plot UMAPs for best episode
+        if episode_rewards_dict:
+            best_episode_num = max(episode_rewards_dict, key=episode_rewards_dict.get)
+            best_episode_reward = episode_rewards_dict[best_episode_num]
+            print(f"\n[EVAL] Best episode: {best_episode_num} (reward: {best_episode_reward:.4f})")
+
+            best_data = episode_clustering_states[best_episode_num]
+            plot_best_episode_umaps(
+                env.adata,
+                best_episode_num,
+                best_data['initial'],
+                best_data['final'],
+                str(umap_plot_path)
+            )
     except Exception as e:
         print(f"[PLOT] Error creating plot: {e}")
+        import traceback
+        traceback.print_exc()
 
     print("="*70)
     print("✓ TEST COMPLETED SUCCESSFULLY!")
