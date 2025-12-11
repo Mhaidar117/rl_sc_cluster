@@ -662,6 +662,50 @@ def test_reward_normalization_resets_on_episode_reset(mock_adata, gene_sets):
         assert env.reward_calculator._previous_potential is None
 
 
+def test_early_termination_penalty_bypasses_normalization(mock_adata, gene_sets):
+    """Test that early termination penalty bypasses reward normalization."""
+    from rl_sc_cluster_utils.environment import ClusteringEnv
+
+    env = ClusteringEnv(
+        mock_adata,
+        gene_sets=gene_sets,
+        normalize_rewards=True,
+        early_termination_penalty=-5.0,
+        min_steps_before_accept=10,
+        max_steps=15,
+    )
+
+    env.reset()
+
+    # Take several steps to build up normalization statistics
+    for _ in range(5):
+        _, reward, terminated, _, _ = env.step(2)  # Re-cluster increment
+        if terminated:
+            env.reset()
+            break
+
+    # Verify normalizer has statistics
+    assert env.reward_normalizer.count > 0
+
+    # Take Accept action early (before min_steps_before_accept)
+    # This should apply penalty and bypass normalization
+    _, reward, terminated, _, info = env.step(4)  # Accept action
+
+    # Early termination penalty should be exactly -5.0 (not normalized)
+    assert info["early_termination_penalty_applied"] is True
+    assert reward == -5.0
+    assert terminated is True
+
+    # Reset and take another early Accept to verify consistency
+    env.reset()
+    for _ in range(3):  # Fewer steps this time
+        env.step(2)
+
+    _, reward2, terminated2, _, info2 = env.step(4)
+    assert info2["early_termination_penalty_applied"] is True
+    assert reward2 == -5.0  # Still exactly -5.0, not normalized
+
+
 def test_custom_reward_weights(mock_adata, gene_sets):
     """Test custom reward weights."""
     from rl_sc_cluster_utils.environment import ClusteringEnv

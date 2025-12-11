@@ -211,11 +211,11 @@ class RewardCalculator:
         else:
             raise ValueError(f"Unknown reward_mode: {self.reward_mode}")
 
-        # Apply early termination penalty if applicable
+        # Check if early termination penalty should be applied
+        # (Note: penalty is applied in ClusteringEnv after normalization to bypass normalizer)
         early_termination_penalty_applied = False
         if action == 4 and current_step is not None:
             if current_step < self.min_steps_before_accept:
-                reward = self.early_termination_penalty
                 early_termination_penalty_applied = True
 
         # Build info dict (always include raw values)

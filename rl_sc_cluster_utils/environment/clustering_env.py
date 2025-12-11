@@ -285,11 +285,18 @@ class ClusteringEnv(gym.Env):
             current_step=self.current_step,
         )
 
-        # Apply normalization if enabled
-        if self.reward_normalizer is not None:
+        # Apply normalization if enabled (but NOT for early termination penalty)
+        if self.reward_normalizer is not None and not reward_info.get(
+            "early_termination_penalty_applied", False
+        ):
             reward = self.reward_normalizer.update_and_normalize(raw_reward)
         else:
             reward = raw_reward
+
+        # Apply early termination penalty AFTER normalization to bypass normalizer
+        # This ensures the penalty value remains stable and predictable
+        if reward_info.get("early_termination_penalty_applied", False):
+            reward = self.reward_calculator.early_termination_penalty
 
         # Update previous reward for next step
         self._previous_reward = raw_reward
@@ -321,6 +328,9 @@ class ClusteringEnv(gym.Env):
             "Q_GAG": reward_info["Q_GAG"],  # Raw GAG
             "Q_GAG_transformed": reward_info.get("Q_GAG_transformed", reward_info["Q_GAG"]),
             "penalty": reward_info["penalty"],
+            "early_termination_penalty_applied": reward_info.get(
+                "early_termination_penalty_applied", False
+            ),
             "silhouette": reward_info["silhouette"],  # Raw silhouette (preserved)
             "silhouette_for_reward": reward_info.get(
                 "silhouette_for_reward", reward_info["silhouette"]

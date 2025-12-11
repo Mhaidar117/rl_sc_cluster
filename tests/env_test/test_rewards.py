@@ -704,7 +704,7 @@ def test_reward_calculator_reset(clustered_adata, gene_sets):
 
 
 def test_early_termination_penalty(clustered_adata, gene_sets):
-    """Test early termination penalty."""
+    """Test early termination penalty flag."""
     calculator = RewardCalculator(
         clustered_adata,
         gene_sets,
@@ -712,22 +712,26 @@ def test_early_termination_penalty(clustered_adata, gene_sets):
         min_steps_before_accept=20,
     )
 
-    # Accept action before minimum steps should be penalized
+    # Accept action before minimum steps should flag penalty
     reward_early, info_early = calculator.compute_reward(
         clustered_adata, action=4, current_step=10
     )
-    assert reward_early == -5.0
+    assert info_early["early_termination_penalty_applied"] is True
+    # Reward should be the computed reward (penalty applied in ClusteringEnv)
+    assert reward_early != -5.0  # Penalty not applied here, only flagged
 
-    # Accept action after minimum steps should not be penalized
+    # Accept action after minimum steps should not flag penalty
     reward_late, info_late = calculator.compute_reward(
         clustered_adata, action=4, current_step=25
     )
+    assert info_late["early_termination_penalty_applied"] is False
     assert reward_late != -5.0
 
-    # Non-accept action should not be penalized
+    # Non-accept action should not flag penalty
     reward_normal, info_normal = calculator.compute_reward(
         clustered_adata, action=0, current_step=10
     )
+    assert info_normal["early_termination_penalty_applied"] is False
     assert reward_normal != -5.0
 
 
