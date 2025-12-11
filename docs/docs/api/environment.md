@@ -28,6 +28,13 @@
       show_source: true
       heading_level: 3
 
+## ClusteringCache
+
+::: rl_sc_cluster_utils.environment.ClusteringCache
+    options:
+      show_source: true
+      heading_level: 3
+
 ## Overview
 
 The `ClusteringEnv` class is a Gymnasium-compatible reinforcement learning environment for scRNA-seq cluster refinement.
@@ -40,6 +47,7 @@ The `ClusteringEnv` class is a Gymnasium-compatible reinforcement learning envir
 - **Composite Reward**: Q_cluster + Q_GAG - Penalty (Stage 4 complete)
 - **Episodic Learning**: Episodes terminate on Accept action or max steps
 - **Configurable**: Optional state/reward normalization
+- **Performance Optimized**: Hash-based LRU caching for expensive computations (1.5-3x speedup)
 
 ### Quick Example
 
@@ -146,7 +154,7 @@ Initialize the environment.
 - `exploration_bonus` (float): Bonus per step for improvement mode (default: 0.2)
 - `silhouette_shift` (float): Shift amount to keep silhouette non-negative (default: 0.5)
 - `early_termination_penalty` (float): Penalty for Accept action before minimum steps (default: -5.0)
-- `min_steps_before_accept` (int): Minimum steps before Accept action allowed without penalty (default: 20)
+- `min_steps_before_accept` (int): Minimum steps before Accept action allowed without penalty (default: 10)
 
 **Returns:** ClusteringEnv instance
 
