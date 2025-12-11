@@ -133,7 +133,9 @@ class RewardCalculator:
         """
         Compute clustering quality score.
 
-        Formula: Q_cluster = 0.5 * silhouette + 0.3 * modularity + 0.2 * balance
+        Formula: Q_cluster = 0.5 * scaled_silhouette + 0.3 * modularity + 0.2 * balance
+
+        Where scaled_silhouette = (silhouette + 1) / 2  # Maps [-1, 1] to [0, 1]
 
         Parameters
         ----------
@@ -155,11 +157,15 @@ class RewardCalculator:
             cluster_key="clusters",
         )
 
+        # Scale silhouette to [0, 1] to prevent negative scores dominating
+        scaled_silhouette = (silhouette + 1) / 2
+
         # Weighted combination
-        Q_cluster = 0.5 * silhouette + 0.3 * modularity + 0.2 * balance
+        Q_cluster = 0.5 * scaled_silhouette + 0.3 * modularity + 0.2 * balance
 
         info = {
             "silhouette": silhouette,
+            "scaled_silhouette": scaled_silhouette,
             "modularity": modularity,
             "balance": balance,
         }

@@ -287,6 +287,7 @@ class ClusteringEnv(gym.Env):
             "balance": reward_info["balance"],
             "n_singletons": reward_info["n_singletons"],
             "mean_f_stat": reward_info["mean_f_stat"],
+            "f_stats": reward_info.get("f_stats", {}),  # Per-gene-set F-statistics
         }
 
         return next_state, reward, terminated, truncated, info
