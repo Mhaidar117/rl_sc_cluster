@@ -79,6 +79,56 @@ def load_subset(data_path, n_cells=1000):
     return adata
 
 
+def plot_resolution_clusters(all_step_data, output_path):
+    """Plot Resolution vs Number of Clusters."""
+    print(f"[PLOT] Creating resolution vs clusters visualization...")
+    df = pd.DataFrame(all_step_data)
+    episodes = sorted(df['episode'].unique())
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Color map for episodes
+    colors = plt.cm.viridis(np.linspace(0, 1, len(episodes)))
+
+    # Plot individual episode trajectories
+    for i, ep in enumerate(episodes):
+        ep_data = df[df['episode'] == ep].sort_values('step')
+        # Add jitter to avoid perfect overlap if resolutions are discrete
+        jitter_x = np.random.normal(0, 0.005, size=len(ep_data))
+        jitter_y = np.random.normal(0, 0.1, size=len(ep_data))
+
+        ax.plot(ep_data['resolution'] + jitter_x,
+                ep_data['n_clusters'] + jitter_y,
+                marker='o', markersize=4, alpha=0.6,
+                label=f'Ep {ep}', color=colors[i], linestyle='-')
+
+        # Mark start and end
+        ax.scatter(ep_data.iloc[0]['resolution'], ep_data.iloc[0]['n_clusters'],
+                   marker='^', s=100, color=colors[i], edgecolor='black', zorder=10)
+        ax.scatter(ep_data.iloc[-1]['resolution'], ep_data.iloc[-1]['n_clusters'],
+                   marker='s', s=100, color=colors[i], edgecolor='black', zorder=10)
+
+    # Plot Average Trend
+    # Bin resolution and calculate mean clusters
+    # Since resolution is continuous, we round it for binning
+    df['res_bin'] = df['resolution'].round(2)
+    mean_trend = df.groupby('res_bin')['n_clusters'].mean().reset_index()
+
+    ax.plot(mean_trend['res_bin'], mean_trend['n_clusters'],
+            color='red', linewidth=4, linestyle='--', label='Average Trend')
+
+    ax.set_xlabel('Resolution')
+    ax.set_ylabel('Number of Clusters')
+    ax.set_title('Resolution vs. Number of Clusters (Trajectory)')
+    ax.grid(True, alpha=0.3)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"[PLOT] ✓ Saved to: {output_path}")
+
+
 def plot_trajectories(all_step_data, output_path):
     """Plot trajectories for all 10 episodes."""
     print(f"[PLOT] Creating trajectory visualization...")
@@ -194,7 +244,7 @@ class DeltaRewardWrapper(gym.Wrapper):
 
         # Calculate shaping reward
         if action == 4:
-            if self.env.current_step < 5:
+            if self.env.current_step < 20:  # Increased minimum steps
                 shaping_reward = -5.0
             else:
                 shaping_reward = 0.0
@@ -216,7 +266,7 @@ def make_env(adata, gene_sets):
         env = ClusteringEnv(
             adata=adata,
             gene_sets=gene_sets,
-            max_steps=15,
+            max_steps=50,  # Increased episode length
             normalize_rewards=False, # We handle normalization/shaping in the wrapper
             reward_delta=0.01,  # Reduced penalty weight
             reward_alpha=0.2,   # Lower weight on standard clustering quality
@@ -272,7 +322,7 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
         eval_env = ClusteringEnv(
             adata=env.adata,
             gene_sets=env.gene_sets,
-            max_steps=15,
+            max_steps=50,  # Match training
             normalize_rewards=False,  # Disable normalization for evaluation
             reward_delta=0.01,  # Match training penalty weight
             reward_alpha=0.2,   # Match training
@@ -293,7 +343,7 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
         action_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}  # Track action distribution
         last_step_data = {}
 
-        while not done[0] and episode_length < 15:
+        while not done[0] and episode_length < 50:  # Match max_steps
             action, _ = model.predict(obs, deterministic=False)
             action_counts[int(action[0])] += 1
             obs, reward, done, info = vec_env.step(action)
@@ -365,7 +415,7 @@ def main():
     env = ClusteringEnv(
         adata=adata,
         gene_sets=GAG_GENE_SETS,
-        max_steps=15,
+        max_steps=50,
         normalize_rewards=True,
     )
     print(f"[ENV] ✓ Environment created")
@@ -424,8 +474,10 @@ def main():
 
     # Plot trajectories
     plot_path = output_dir / "trajectories.png"
+    res_plot_path = output_dir / "resolution_clusters.png"
     try:
         plot_trajectories(episode_metrics, str(plot_path))
+        plot_resolution_clusters(episode_metrics, str(res_plot_path))
     except Exception as e:
         print(f"[PLOT] Error creating plot: {e}")
 
