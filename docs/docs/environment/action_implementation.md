@@ -9,25 +9,82 @@ This document details the implementation of the 5 discrete actions in the cluste
 **Type**: `gymnasium.spaces.Discrete(5)`
 
 **Actions**:
-- 0: Split worst cluster
-- 1: Merge closest pair
+- 0: Split worst cluster (by GAG heterogeneity, fallback to silhouette)
+- 1: Merge closest pair (by GAG similarity, fallback to centroid distance)
 - 2: Re-cluster resolution +0.1
 - 3: Re-cluster resolution -0.1
 - 4: Accept (terminate episode)
 
 ---
 
+## GAG-Aware Action Selection
+
+Actions 0 (Split) and 1 (Merge) use **GAG-aware selection** when gene sets are provided, with fallback to traditional clustering metrics when unavailable.
+
+### Rationale
+
+The RL agent's reward is dominated by GAG enrichment metrics (β=2.0 with non-linear transformation). To align actions with the reward objective:
+
+- **Split**: Target clusters with high GAG heterogeneity (within-cluster variance in GAG enrichment). High variance indicates the cluster contains cells with diverse GAG profiles that may represent multiple subtypes.
+- **Merge**: Target cluster pairs with similar mean GAG profiles (small distance in GAG enrichment space). Similar profiles suggest the clusters may be the same GAG subtype despite transcriptomic differences.
+
+This mirrors how biologists manually sub-classify: by examining GAG sulfation patterns to identify true subtypes.
+
+### Fallback Mechanism
+
+When gene sets are unavailable or GAG metrics cannot be computed:
+- **Split**: Falls back to lowest silhouette score (traditional clustering quality)
+- **Merge**: Falls back to closest centroid distance (embedding space proximity)
+
+---
+
 ## Action 0: Split Worst Cluster
 
 ### Objective
-Identify the cluster with lowest quality (worst silhouette) and split it into sub-clusters.
+Identify the cluster with highest GAG heterogeneity (or lowest silhouette as fallback) and split it into sub-clusters.
 
 ### Algorithm
 
-1. **Identify Worst Cluster**:
+1. **Identify Worst Cluster (GAG-Aware)**:
    ```python
-   def find_worst_cluster(adata):
-       """Find cluster with lowest mean silhouette."""
+   def find_worst_cluster(adata, gene_sets):
+       """Find cluster to split using GAG heterogeneity or silhouette fallback."""
+       # Try GAG-aware selection first
+       if gene_sets:
+           gag_cluster = find_highest_gag_heterogeneity_cluster(adata, gene_sets)
+           if gag_cluster is not None:
+               return gag_cluster
+
+       # Fallback to silhouette-based selection
+       return find_lowest_silhouette_cluster(adata)
+
+   def find_highest_gag_heterogeneity_cluster(adata, gene_sets):
+       """Find cluster with highest within-cluster GAG variance."""
+       cluster_heterogeneity = {}
+
+       for cluster_id in adata.obs['clusters'].unique():
+           cluster_mask = adata.obs['clusters'] == cluster_id
+           if cluster_mask.sum() < 3:
+               continue  # Need variance
+
+           variances = []
+           for gene_set in gene_sets.values():
+               enrichment_scores = compute_enrichment_scores(adata, gene_set)
+               if enrichment_scores is not None:
+                   cluster_scores = enrichment_scores[cluster_mask]
+                   variances.append(np.var(cluster_scores))
+
+           if variances:
+               cluster_heterogeneity[cluster_id] = np.mean(variances)
+
+       if not cluster_heterogeneity:
+           return None
+
+       # Highest heterogeneity = should be split
+       return max(cluster_heterogeneity, key=cluster_heterogeneity.get)
+
+   def find_lowest_silhouette_cluster(adata):
+       """Fallback: Find cluster with lowest mean silhouette."""
        cluster_silhouettes = {}
        for cluster_id in adata.obs['clusters'].unique():
            cluster_mask = adata.obs['clusters'] == cluster_id
@@ -106,11 +163,70 @@ subcluster_resolution = current_resolution + 0.2
 ## Action 1: Merge Closest Pair
 
 ### Objective
-Find the two clusters with minimum centroid distance and merge them.
+Find the two clusters with most similar GAG profiles (or minimum centroid distance as fallback) and merge them.
 
 ### Algorithm
 
-1. **Compute Cluster Centroids**:
+1. **Find Closest Pair (GAG-Aware)**:
+   ```python
+   def merge_closest_pair(adata, gene_sets):
+       """Find and merge clusters using GAG similarity or centroid fallback."""
+       # Try GAG-aware selection first
+       closest_pair = None
+       if gene_sets:
+           closest_pair = find_most_similar_gag_clusters(adata, gene_sets)
+
+       # Fallback to centroid-based selection
+       if closest_pair is None:
+           centroids = compute_centroids(adata)
+           closest_pair = find_closest_clusters(centroids)
+
+       if closest_pair is None:
+           return None  # Cannot merge
+
+       merge_clusters(adata, closest_pair[0], closest_pair[1])
+       return closest_pair
+
+   def find_most_similar_gag_clusters(adata, gene_sets):
+       """Find cluster pair with most similar mean GAG profiles."""
+       # Compute GAG profile for each cluster
+       # Profile = [mean_enrichment_geneset1, mean_enrichment_geneset2, ...]
+       cluster_gag_profiles = {}
+
+       # Build enrichment vectors for each gene set
+       gene_set_enrichments = {}
+       for name, genes in gene_sets.items():
+           enrichment = compute_enrichment_scores(adata, genes)
+           if enrichment is not None:
+               gene_set_enrichments[name] = enrichment
+
+       if not gene_set_enrichments:
+           return None
+
+       # Build GAG profile for each cluster
+       for cluster_id in adata.obs['clusters'].unique():
+           cluster_mask = adata.obs['clusters'] == cluster_id
+           profile = []
+           for enrichment in gene_set_enrichments.values():
+               profile.append(enrichment[cluster_mask].mean())
+           cluster_gag_profiles[cluster_id] = np.array(profile)
+
+       # Find pair with smallest GAG distance
+       min_dist = np.inf
+       closest_pair = None
+
+       cluster_ids = list(cluster_gag_profiles.keys())
+       for i, c1 in enumerate(cluster_ids):
+           for c2 in cluster_ids[i+1:]:
+               dist = np.linalg.norm(cluster_gag_profiles[c1] - cluster_gag_profiles[c2])
+               if dist < min_dist:
+                   min_dist = dist
+                   closest_pair = (c1, c2)
+
+       return closest_pair
+   ```
+
+2. **Compute Cluster Centroids (Fallback)**:
    ```python
    def compute_centroids(adata):
        """Compute centroid of each cluster in embedding space."""
@@ -122,12 +238,12 @@ Find the two clusters with minimum centroid distance and merge them.
        return centroids
    ```
 
-2. **Find Closest Pair**:
+3. **Find Closest Pair by Centroids (Fallback)**:
    ```python
    def find_closest_clusters(centroids):
-       """Find pair of clusters with minimum distance."""
+       """Fallback: Find pair of clusters with minimum centroid distance."""
        min_dist = np.inf
-         closest_pair = None
+       closest_pair = None
 
        cluster_ids = list(centroids.keys())
        for i, c1 in enumerate(cluster_ids):
@@ -140,7 +256,7 @@ Find the two clusters with minimum centroid distance and merge them.
        return closest_pair
    ```
 
-3. **Merge Clusters**:
+4. **Merge Clusters**:
    ```python
    def merge_clusters(adata, cluster1, cluster2):
        """Merge two clusters into one."""
@@ -158,11 +274,12 @@ Find the two clusters with minimum centroid distance and merge them.
 ### Edge Cases
 
 - **Only 1 cluster**: Cannot merge (skip or return error)
+- **No valid GAG enrichment**: Falls back to centroid distance
 - **Tie in distance**: Use first pair found (deterministic)
 
 ### Distance Metric
-- **Default**: Euclidean distance in embedding space
-- **Future**: Allow configuration (cosine, Manhattan, etc.)
+- **Primary (GAG-aware)**: Euclidean distance in GAG profile space
+- **Fallback**: Euclidean distance in embedding space
 
 ---
 
@@ -342,5 +459,19 @@ def execute_action(adata, action, current_resolution):
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-01-XX
+**Document Version**: 2.0
+**Last Updated**: 2025-12-11
+
+---
+
+## Changelog
+
+### Version 2.0 (2025-12-11)
+- **GAG-aware action selection**: Split and merge actions now prioritize GAG metrics
+  - Split: Uses within-cluster GAG variance (heterogeneity) to identify clusters to split
+  - Merge: Uses mean GAG profile distance to identify clusters to merge
+- **Fallback mechanism**: Falls back to silhouette/centroid when gene sets unavailable
+- **Biological alignment**: Actions now mirror how biologists manually sub-classify by GAG patterns
+
+### Version 1.0
+- Initial implementation with silhouette-based split and centroid-based merge

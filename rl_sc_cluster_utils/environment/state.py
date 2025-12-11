@@ -6,9 +6,15 @@ from anndata import AnnData
 import networkx as nx
 from networkx.algorithms.community.quality import modularity as nx_modularity
 import numpy as np
-import scanpy as sc
-from scipy.stats import entropy, f_oneway
-from sklearn.metrics import mutual_info_score, silhouette_score
+from scipy.stats import entropy
+
+from .cache import ClusteringCache
+from .utils import (
+    compute_clustering_quality_metrics,
+    compute_enrichment_scores,
+    compute_gag_enrichment_metrics,
+    get_embeddings,
+)
 
 
 class StateExtractor:
@@ -45,18 +51,15 @@ class StateExtractor:
         self._embeddings = None
         self._neighbors_computed = False
 
-        # Validate and cache embeddings
-        if "X_scvi" in adata.obsm:
-            self._embeddings = adata.obsm["X_scvi"]
-        elif adata.X is not None:
-            # Fallback to raw expression if no embeddings
-            self._embeddings = adata.X if isinstance(adata.X, np.ndarray) else adata.X.toarray()
-        else:
-            raise ValueError("AnnData must contain either obsm['X_scvi'] or X matrix")
+        # Validate and cache embeddings using shared utility
+        self._embeddings = get_embeddings(adata)
 
         # Check if neighbors graph exists
         if "neighbors" in adata.uns:
             self._neighbors_computed = True
+
+        # Initialize cache for clustering-dependent metrics
+        self._cache = ClusteringCache(max_size=100)
 
         # Normalization ranges (will be computed if normalize=True)
         self._state_min = None
@@ -140,49 +143,35 @@ class StateExtractor:
 
     def _compute_quality_metrics(self, adata: AnnData) -> np.ndarray:
         """
-        Compute clustering quality metrics.
+        Compute clustering quality metrics using shared utilities.
 
         Returns
         -------
         metrics : np.ndarray
             [silhouette, modularity, balance]
         """
-        metrics = np.zeros(3, dtype=np.float64)
-
-        # Get cluster labels
-        if "clusters" not in adata.obs:
-            return metrics
-
-        cluster_labels = adata.obs["clusters"]
-        n_clusters = len(cluster_labels.unique())
-
-        # Metric 0: Silhouette score
-        if n_clusters > 1 and n_clusters < adata.n_obs:
-            try:
-                metrics[0] = silhouette_score(self._embeddings, cluster_labels)
-            except Exception:
-                # Handle edge cases (e.g., all same cluster)
-                metrics[0] = 0.0
+        # Check cache first (only if clusters exist)
+        if "clusters" in adata.obs:
+            cluster_labels = adata.obs["clusters"]
+            cached = self._cache.get(cluster_labels, "quality_metrics")
+            if cached is not None:
+                return cached["metrics"]
         else:
-            metrics[0] = 0.0
+            cluster_labels = None
 
-        # Metric 1: Graph modularity
-        if self._neighbors_computed and n_clusters > 1:
-            try:
-                metrics[1] = self._compute_graph_modularity(adata, "clusters")
-            except Exception:
-                metrics[1] = 0.0
-        else:
-            metrics[1] = 0.0
+        # Use shared utility function
+        silhouette, modularity, balance = compute_clustering_quality_metrics(
+            adata,
+            self._embeddings,
+            neighbors_computed=self._neighbors_computed,
+            cluster_key="clusters",
+        )
 
-        # Metric 2: Cluster balance
-        cluster_sizes = cluster_labels.value_counts()
-        if n_clusters > 1:
-            mean_size = cluster_sizes.mean()
-            std_size = cluster_sizes.std()
-            metrics[2] = 1.0 - (std_size / (mean_size + 1e-10))
-        else:
-            metrics[2] = 1.0  # Single cluster is perfectly balanced
+        metrics = np.array([silhouette, modularity, balance], dtype=np.float64)
+
+        # Cache result (only if clusters exist)
+        if cluster_labels is not None:
+            self._cache.set(cluster_labels, "quality_metrics", {"metrics": metrics})
 
         return metrics
 
@@ -230,7 +219,7 @@ class StateExtractor:
 
     def _compute_gag_enrichment(self, adata: AnnData) -> np.ndarray:
         """
-        Compute GAG enrichment metrics for all gene sets.
+        Compute GAG enrichment metrics for all gene sets using shared utilities.
 
         Returns
         -------
@@ -243,9 +232,6 @@ class StateExtractor:
         if "clusters" not in adata.obs:
             return metrics
 
-        cluster_labels = adata.obs["clusters"]
-        n_clusters = len(cluster_labels.unique())
-
         # If no gene sets provided, return zeros
         if not self.gene_sets:
             return metrics
@@ -255,66 +241,28 @@ class StateExtractor:
         while len(gene_set_names) < 7:
             gene_set_names.append(f"empty_set_{len(gene_set_names)}")
 
-        # Compute metrics for each gene set
+        # Check cache first
+        cluster_labels = adata.obs["clusters"]
+        cached = self._cache.get(cluster_labels, "gag_enrichment")
+        if cached is not None:
+            return cached["metrics"]
+
+        # Compute metrics using shared utility
+        gag_metrics = compute_gag_enrichment_metrics(adata, self.gene_sets, cluster_key="clusters")
+
+        # Assemble into state vector format
         for i, gene_set_name in enumerate(gene_set_names):
             base_idx = i * 4
 
-            # Get gene set
-            if gene_set_name in self.gene_sets:
-                gene_set = self.gene_sets[gene_set_name]
-            else:
-                gene_set = []
+            if gene_set_name in gag_metrics:
+                set_metrics = gag_metrics[gene_set_name]
+                metrics[base_idx + 0] = set_metrics["mean"]
+                metrics[base_idx + 1] = set_metrics["max"]
+                metrics[base_idx + 2] = set_metrics["f_stat"]
+                metrics[base_idx + 3] = set_metrics["mi"]
 
-            # Skip if gene set is empty
-            if not gene_set:
-                continue
-
-            # Compute enrichment scores (simplified AUCell-like approach)
-            enrichment_scores = self._compute_enrichment_scores(adata, gene_set)
-
-            if enrichment_scores is None:
-                continue
-
-            # Metric 0: Mean enrichment across clusters
-            cluster_means = []
-            for cluster in cluster_labels.unique():
-                cluster_mask = cluster_labels == cluster
-                cluster_mean = enrichment_scores[cluster_mask].mean()
-                cluster_means.append(cluster_mean)
-
-            metrics[base_idx + 0] = np.mean(cluster_means)
-
-            # Metric 1: Max enrichment
-            metrics[base_idx + 1] = np.max(cluster_means)
-
-            # Metric 2: ANOVA F-statistic
-            if n_clusters > 1:
-                try:
-                    groups = [
-                        enrichment_scores[cluster_labels == cluster]
-                        for cluster in cluster_labels.unique()
-                    ]
-                    f_stat, _ = f_oneway(*groups)
-                    metrics[base_idx + 2] = f_stat if not np.isnan(f_stat) else 0.0
-                except Exception:
-                    metrics[base_idx + 2] = 0.0
-            else:
-                metrics[base_idx + 2] = 0.0
-
-            # Metric 3: Mutual information
-            if n_clusters > 1:
-                try:
-                    # Bin enrichment scores into 10 bins
-                    enrichment_bins = np.digitize(
-                        enrichment_scores,
-                        bins=np.linspace(enrichment_scores.min(), enrichment_scores.max(), 11),
-                    )
-                    mi = mutual_info_score(cluster_labels, enrichment_bins)
-                    metrics[base_idx + 3] = mi if not np.isnan(mi) else 0.0
-                except Exception:
-                    metrics[base_idx + 3] = 0.0
-            else:
-                metrics[base_idx + 3] = 0.0
+        # Cache result
+        self._cache.set(cluster_labels, "gag_enrichment", {"metrics": metrics})
 
         return metrics
 
@@ -323,6 +271,9 @@ class StateExtractor:
     ) -> Optional[np.ndarray]:
         """
         Compute enrichment scores for a gene set (simplified AUCell).
+
+        This method is kept for backward compatibility but delegates to
+        the shared utility function.
 
         Parameters
         ----------
@@ -336,29 +287,7 @@ class StateExtractor:
         scores : np.ndarray or None
             Enrichment scores for each cell, or None if gene set invalid
         """
-        # Find genes in the dataset
-        valid_genes = [gene for gene in gene_set if gene in adata.var_names]
-
-        if len(valid_genes) == 0:
-            return None
-
-        # Get expression matrix
-        if isinstance(adata.X, np.ndarray):
-            expr = adata.X
-        else:
-            expr = adata.X.toarray()
-
-        # Get gene indices
-        gene_indices = [adata.var_names.get_loc(gene) for gene in valid_genes]
-
-        # Compute mean expression of gene set per cell (simplified enrichment)
-        enrichment_scores = expr[:, gene_indices].mean(axis=1)
-
-        # Flatten if needed
-        if len(enrichment_scores.shape) > 1:
-            enrichment_scores = enrichment_scores.flatten()
-
-        return enrichment_scores
+        return compute_enrichment_scores(adata, gene_set)
 
     def _normalize_state(self, state: np.ndarray) -> np.ndarray:
         """
