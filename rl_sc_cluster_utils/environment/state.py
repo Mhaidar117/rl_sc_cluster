@@ -3,6 +3,8 @@
 from typing import Dict, List, Optional
 
 from anndata import AnnData
+import networkx as nx
+from networkx.algorithms.community.quality import modularity as nx_modularity
 import numpy as np
 import scanpy as sc
 from scipy.stats import entropy, f_oneway
@@ -167,14 +169,7 @@ class StateExtractor:
         # Metric 1: Graph modularity
         if self._neighbors_computed and n_clusters > 1:
             try:
-                # Compute modularity using scanpy
-                # Note: This modifies adata.uns, but we're okay with that
-                modularity = sc.metrics.clustering.modularity(
-                    adata,
-                    label_key="clusters",
-                    use_rep="X_scvi" if "X_scvi" in adata.obsm else None,
-                )
-                metrics[1] = modularity
+                metrics[1] = self._compute_graph_modularity(adata, "clusters")
             except Exception:
                 metrics[1] = 0.0
         else:
@@ -190,6 +185,48 @@ class StateExtractor:
             metrics[2] = 1.0  # Single cluster is perfectly balanced
 
         return metrics
+
+    def _compute_graph_modularity(
+        self, adata: AnnData, cluster_key: str, neighbors_key: str = "neighbors"
+    ) -> float:
+        """
+        Compute modularity of a clustering using the kNN graph from Scanpy.
+
+        Parameters
+        ----------
+        adata : AnnData
+            Annotated data object with neighbors graph
+        cluster_key : str
+            Key in adata.obs containing cluster labels
+        neighbors_key : str
+            Key in adata.uns containing neighbors info
+
+        Returns
+        -------
+        float
+            Modularity score
+        """
+        # Get the kNN graph Scanpy built
+        conn_key = adata.uns[neighbors_key]["connectivities_key"]
+        A = adata.obsp[conn_key]  # sparse adjacency matrix
+
+        # Build an undirected weighted graph
+        G = nx.from_scipy_sparse_array(A)
+
+        # Turn cluster labels into a list of communities
+        # IMPORTANT: Use integer indices (0 to n-1) to match graph node indices
+        labels = adata.obs[cluster_key].astype("category")
+
+        # Create communities using integer indices, not string cell names
+        communities = []
+        for c in labels.cat.categories:
+            # Get boolean mask for this cluster
+            mask = (labels == c).values
+            # Get integer indices where mask is True
+            cell_indices = set(np.where(mask)[0])
+            communities.append(cell_indices)
+
+        return nx_modularity(G, communities, weight="weight")
 
     def _compute_gag_enrichment(self, adata: AnnData) -> np.ndarray:
         """
