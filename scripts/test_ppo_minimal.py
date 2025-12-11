@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Test PPO with 1000 cells, 10 episodes, save all metrics."""
+"""Test PPO with 10000 cells, 20 episodes, save all metrics."""
 
 import sys
 from pathlib import Path
@@ -80,48 +80,73 @@ def load_subset(data_path, n_cells=1000):
 
 
 def plot_resolution_clusters(all_step_data, output_path):
-    """Plot Resolution vs Number of Clusters."""
-    print(f"[PLOT] Creating resolution vs clusters visualization...")
+    """Plot Resolution vs Number of Clusters Heatmap."""
+    print(f"[PLOT] Creating resolution vs clusters heatmap...")
     df = pd.DataFrame(all_step_data)
-    episodes = sorted(df['episode'].unique())
 
-    fig, ax = plt.subplots(figsize=(12, 8))
+    # 1. Prepare Data for Heatmap
+    # We want mean reward for each (resolution, n_clusters) pair
+    # Resolution is rounded to 0.1 to bin it effectively
+    df['res_bin'] = df['resolution'].round(2) # Keep 2 decimal places to handle small float errors
 
-    # Color map for episodes
-    colors = plt.cm.viridis(np.linspace(0, 1, len(episodes)))
+    # Pivot table: Index=n_clusters, Columns=res_bin, Values=raw_reward
+    pivot_table = df.pivot_table(
+        index='n_clusters',
+        columns='res_bin',
+        values='raw_reward',
+        aggfunc='mean'
+    )
 
-    # Plot individual episode trajectories
-    for i, ep in enumerate(episodes):
-        ep_data = df[df['episode'] == ep].sort_values('step')
-        # Add jitter to avoid perfect overlap if resolutions are discrete
-        jitter_x = np.random.normal(0, 0.005, size=len(ep_data))
-        jitter_y = np.random.normal(0, 0.1, size=len(ep_data))
+    # Sort index descending (high clusters at top)
+    pivot_table = pivot_table.sort_index(ascending=False)
 
-        ax.plot(ep_data['resolution'] + jitter_x,
-                ep_data['n_clusters'] + jitter_y,
-                marker='o', markersize=4, alpha=0.6,
-                label=f'Ep {ep}', color=colors[i], linestyle='-')
+    # 2. Plotting
+    fig, ax = plt.subplots(figsize=(12, 10))
 
-        # Mark start and end
-        ax.scatter(ep_data.iloc[0]['resolution'], ep_data.iloc[0]['n_clusters'],
-                   marker='^', s=100, color=colors[i], edgecolor='black', zorder=10)
-        ax.scatter(ep_data.iloc[-1]['resolution'], ep_data.iloc[-1]['n_clusters'],
-                   marker='s', s=100, color=colors[i], edgecolor='black', zorder=10)
+    # Use imshow for heatmap
+    # We need to handle NaNs (unvisited states) - let's mask them
+    # And we need to explicitly set extent or labels because imshow works on array indices
 
-    # Plot Average Trend
-    # Bin resolution and calculate mean clusters
-    # Since resolution is continuous, we round it for binning
-    df['res_bin'] = df['resolution'].round(2)
-    mean_trend = df.groupby('res_bin')['n_clusters'].mean().reset_index()
+    # Extract data as array
+    data_array = pivot_table.to_numpy()
 
-    ax.plot(mean_trend['res_bin'], mean_trend['n_clusters'],
-            color='red', linewidth=4, linestyle='--', label='Average Trend')
+    # Create colormap
+    cmap = plt.cm.viridis
+    cmap.set_bad('white') # Set NaNs to white or gray
+
+    # Plot
+    im = ax.imshow(data_array, aspect='auto', cmap=cmap, interpolation='nearest')
+
+    # Add colorbar
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label('Mean Raw Reward', rotation=270, labelpad=20)
+
+    # Set ticks and labels
+    # X-axis: Resolution bins
+    x_labels = pivot_table.columns
+    # We don't want every single label if there are too many, but here resolution is likely 0.1, 0.2...0.8
+    ax.set_xticks(np.arange(len(x_labels)))
+    ax.set_xticklabels(x_labels)
+
+    # Y-axis: n_clusters
+    y_labels = pivot_table.index
+    # If too many Y labels, show every Nth
+    if len(y_labels) > 20:
+        step = len(y_labels) // 20 + 1
+        y_ticks = np.arange(0, len(y_labels), step)
+        y_tick_labels = y_labels[::step]
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels(y_tick_labels)
+    else:
+        ax.set_yticks(np.arange(len(y_labels)))
+        ax.set_yticklabels(y_labels)
 
     ax.set_xlabel('Resolution')
     ax.set_ylabel('Number of Clusters')
-    ax.set_title('Resolution vs. Number of Clusters (Trajectory)')
-    ax.grid(True, alpha=0.3)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.set_title('State Quality Heatmap: Reward vs (Resolution, Clusters)')
+
+    # Add annotations for visited count if not too crowded?
+    # Maybe too cluttered. Let's skip for now.
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
@@ -130,15 +155,17 @@ def plot_resolution_clusters(all_step_data, output_path):
 
 
 def plot_trajectories(all_step_data, output_path):
-    """Plot trajectories for all 10 episodes."""
+    """Plot trajectories for all episodes."""
     print(f"[PLOT] Creating trajectory visualization...")
     df = pd.DataFrame(all_step_data)
 
-    # Setup grid: 10 rows (one per episode), 4 columns (Actions, Reward, Raw Metrics, Weighted Components)
-    fig = plt.figure(figsize=(25, 30))
-    gs = gridspec.GridSpec(10, 4, width_ratios=[1, 1, 1, 1])
-
     episodes = sorted(df['episode'].unique())
+    num_episodes = len(episodes)
+
+    # Setup grid: dynamic rows (one per episode), 4 columns (Actions, Reward, Raw Metrics, Weighted Components)
+    # Scale figure height based on number of episodes (3 units per episode)
+    fig = plt.figure(figsize=(25, 3 * num_episodes))
+    gs = gridspec.GridSpec(num_episodes, 4, width_ratios=[1, 1, 1, 1])
 
     action_labels = {0: 'Split', 1: 'Merge', 2: 'Res+', 3: 'Res-', 4: 'Accept'}
     action_colors = {0: 'red', 1: 'blue', 2: 'green', 3: 'orange', 4: 'purple'}
@@ -180,9 +207,13 @@ def plot_trajectories(all_step_data, output_path):
         # 4. Weighted Components (What the agent sees)
         ax3 = plt.subplot(gs[i, 3])
         # Reconstruct weighted values based on params (Alpha=0.2, Delta=0.01)
-        # And the Non-Linear GAG used in wrapper: (Q_GAG * 6)^2
+        # Non-Linear GAG transformation: (Q_GAG * 6)^2 (now in RewardCalculator)
         w_cluster = ep_data['Q_cluster'] * 0.2
-        w_gag_nonlinear = (ep_data['Q_GAG'] * 6.0) ** 2
+        # Use Q_GAG_transformed if available, otherwise reconstruct
+        if 'Q_GAG_transformed' in ep_data.columns:
+            w_gag_nonlinear = ep_data['Q_GAG_transformed']
+        else:
+            w_gag_nonlinear = (ep_data['Q_GAG'] * 6.0) ** 2
         w_penalty = ep_data['penalty'] * 0.01
 
         ax3.plot(steps, w_cluster, label='0.2 * Q_cluster', c='blue')
@@ -199,67 +230,6 @@ def plot_trajectories(all_step_data, output_path):
     print(f"[PLOT] ✓ Saved to: {output_path}")
 
 
-import gymnasium as gym
-
-class DeltaRewardWrapper(gym.Wrapper):
-    """
-    Reward wrapper that changes the reward to be the improvement in quality
-    rather than the absolute quality.
-
-    R_t = Potential(S_t) - Potential(S_{t-1})
-    """
-    def __init__(self, env):
-        super().__init__(env)
-        self.last_potential = None
-
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-
-        # Calculate initial custom potential
-        raw_gag = info.get('Q_GAG', 0.0)
-        # Scaling reduced from 10.0 to 6.0 to balance with Q_cluster
-        transformed_gag = (raw_gag * 6.0) ** 2
-        q_cluster = info.get('Q_cluster', 0.0)
-        penalty = info.get('penalty', 0.0)
-        weighted_penalty = penalty * 0.01
-
-        self.last_potential = (0.2 * q_cluster) + (1.0 * transformed_gag) - weighted_penalty
-
-        return obs, info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
-
-        # Calculate NON-LINEAR GAG potential
-        raw_gag = info.get('Q_GAG', 0.0)
-        # Scaling reduced from 10.0 to 6.0
-        transformed_gag = (raw_gag * 6.0) ** 2
-
-        q_cluster = info.get('Q_cluster', 0.0)
-        penalty = info.get('penalty', 0.0)
-        weighted_penalty = penalty * 0.01
-
-        # Custom Potential
-        current_potential = (0.2 * q_cluster) + (1.0 * transformed_gag) - weighted_penalty
-
-        # Calculate shaping reward
-        if action == 4:
-            if self.env.current_step < 20:  # Increased minimum steps
-                shaping_reward = -5.0
-            else:
-                shaping_reward = 0.0
-        else:
-            shaping_reward = current_potential - self.last_potential
-            # Exploration bonus
-            shaping_reward += 0.2
-
-        self.last_potential = current_potential
-
-        step_penalty = 0.0
-        final_reward = shaping_reward + step_penalty
-
-        return obs, final_reward, terminated, truncated, info
-
 def make_env(adata, gene_sets):
     """Create environment factory."""
     def _init():
@@ -267,12 +237,18 @@ def make_env(adata, gene_sets):
             adata=adata,
             gene_sets=gene_sets,
             max_steps=50,  # Increased episode length
-            normalize_rewards=False, # We handle normalization/shaping in the wrapper
-            reward_delta=0.01,  # Reduced penalty weight
+            normalize_rewards=False,  # Reward shaping handled in RewardCalculator
+            reward_mode="shaped",  # Use shaped mode to avoid negative rewards
             reward_alpha=0.2,   # Lower weight on standard clustering quality
-            reward_beta=2.0,    # Super-High weight on GAG enrichment (Biology)
+            reward_beta=2.0,    # High weight on GAG enrichment (Biology)
+            reward_delta=0.01,  # Reduced penalty weight
+            gag_nonlinear=True,  # Apply non-linear GAG transformation
+            gag_scale=6.0,       # Scaling factor for GAG transformation
+            exploration_bonus=0.2,  # Exploration bonus (for improvement mode)
+            early_termination_penalty=-5.0,  # Penalty for early Accept
+            min_steps_before_accept=20,  # Minimum steps before Accept allowed
         )
-        return DeltaRewardWrapper(env)
+        return env
     return _init
 
 
@@ -280,7 +256,7 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
     """Run episodes using PPO, collect all metrics."""
     print(f"\n[PPO] Creating PPO model...")
 
-    # Create vectorized env with our wrapper
+    # Create vectorized env
     vec_env = DummyVecEnv([make_env(env.adata, env.gene_sets)])
 
     model = PPO(
@@ -302,7 +278,7 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
     print(f"[PPO] ✓ Model created")
 
     print(f"\n[PPO] Training for {total_timesteps} timesteps...")
-    print(f"[PPO] Using Delta-Reward (Improvement-based) and Entropy=0.05")
+    print(f"[PPO] Using shaped reward mode (avoids negative rewards)")
     print(f"[PPO] Training started...", flush=True)
 
     training_start = time.time()
@@ -318,15 +294,21 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
 
     # Create environment WITHOUT reward normalization for evaluation
     # This gives us true reward values, not normalized ones
+    # Use same reward configuration as training for consistency
     def make_eval_env():
         eval_env = ClusteringEnv(
             adata=env.adata,
             gene_sets=env.gene_sets,
             max_steps=50,  # Match training
             normalize_rewards=False,  # Disable normalization for evaluation
-            reward_delta=0.01,  # Match training penalty weight
+            reward_mode="shaped",  # Match training
             reward_alpha=0.2,   # Match training
             reward_beta=2.0,    # Match training
+            reward_delta=0.01,  # Match training penalty weight
+            gag_nonlinear=True,  # Match training
+            gag_scale=6.0,       # Match training
+            early_termination_penalty=-5.0,  # Match training
+            min_steps_before_accept=20,  # Match training
         )
         return eval_env
 
@@ -357,11 +339,13 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
                 'step': episode_length + 1,
                 'action': int(action[0]),
                 'reward': float(reward[0]),
-                'raw_reward': float(step_info.get('raw_reward', 0)),
+                'raw_reward': float(step_info.get('raw_reward', step_info.get('reward', 0))),
                 'Q_cluster': float(step_info.get('Q_cluster', 0)),
-                'Q_GAG': float(step_info.get('Q_GAG', 0)),
+                'Q_GAG': float(step_info.get('Q_GAG', 0)),  # Raw GAG
+                'Q_GAG_transformed': float(step_info.get('Q_GAG_transformed', step_info.get('Q_GAG', 0))),  # Transformed GAG
                 'penalty': float(step_info.get('penalty', 0)),
-                'silhouette': float(step_info.get('silhouette', 0)),
+                'silhouette': float(step_info.get('silhouette', 0)),  # Raw silhouette
+                'silhouette_for_reward': float(step_info.get('silhouette_for_reward', step_info.get('silhouette', 0))),
                 'modularity': float(step_info.get('modularity', 0)),
                 'balance': float(step_info.get('balance', 0)),
                 'n_clusters': int(step_info.get('n_clusters', 0)),
@@ -369,6 +353,7 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
                 'mean_f_stat': float(step_info.get('mean_f_stat', 0)),
                 'resolution': float(step_info.get('resolution', 0)),
                 'resolution_clamped': bool(step_info.get('resolution_clamped', False)),
+                'reward_mode': str(step_info.get('reward_mode', 'unknown')),
             }
 
             # Add per-gene-set F-statistics
@@ -399,7 +384,7 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
 def main():
     """Main test."""
     print("="*70)
-    print("PPO TEST - 1000 cells, 10 episodes")
+    print("PPO TEST - 10000 cells, 20 episodes")
     print("="*70)
 
     data_path = project_root / "data" / "processed" / "human_interneurons.h5ad"
@@ -407,8 +392,8 @@ def main():
         print(f"ERROR: {data_path} not found")
         return 1
 
-    # Load 1000 cells
-    adata = load_subset(data_path, n_cells=1000)
+    # Load 10000 cells
+    adata = load_subset(data_path, n_cells=10000)
 
     # Create environment
     print(f"\n[ENV] Creating environment...")
@@ -426,7 +411,7 @@ def main():
     print(f"[ENV] ✓ F-stats available: {list(info.get('f_stats', {}).keys())}")
 
     # Run episodes with PPO
-    episode_metrics, model = run_episodes_with_ppo(env, num_episodes=10, total_timesteps=1000)
+    episode_metrics, model = run_episodes_with_ppo(env, num_episodes=20, total_timesteps=2000)
 
     # Save metrics
     print(f"\n[SAVE] Saving metrics...")

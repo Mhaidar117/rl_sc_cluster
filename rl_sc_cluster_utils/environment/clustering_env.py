@@ -21,13 +21,17 @@ class ClusteringEnv(gym.Env):
     Actions: 5 discrete actions (split, merge, re-cluster, accept)
     Reward: Composite of clustering quality and GAG enrichment
 
-    Reward Formula:
-        R = α·Q_cluster + β·Q_GAG - δ·Penalty
+    Reward Formula (configurable modes):
+        - Absolute: R = α·Q_cluster + β·Q_GAG_transformed - δ·Penalty
+        - Improvement: R = (current_potential - previous_potential) + exploration_bonus
+        - Shaped: R = raw_reward - baseline + offset (default, avoids negative rewards)
 
     Where:
-    - Q_cluster = 0.5·silhouette + 0.3·modularity + 0.2·balance
-    - Q_GAG = mean(log1p(f_stat) / 10.0) across gene sets
+    - Q_cluster = 0.5·silhouette_for_reward + 0.3·modularity + 0.2·balance
+    - Q_GAG = mean(log1p(f_stat) / 10.0) across gene sets (raw)
+    - Q_GAG_transformed = (Q_GAG * gag_scale)² if gag_nonlinear=True
     - Penalty = degenerate states + singletons + bounds violations
+    - Early termination: Penalty applied if Accept action taken before min_steps_before_accept
 
     Parameters
     ----------
@@ -45,11 +49,25 @@ class ClusteringEnv(gym.Env):
     render_mode : str, optional
         Render mode for visualization (default: None)
     reward_alpha : float, optional
-        Weight for clustering quality in reward (default: 0.6)
+        Weight for clustering quality in reward (default: 0.2)
     reward_beta : float, optional
-        Weight for GAG enrichment in reward (default: 0.4)
+        Weight for GAG enrichment in reward (default: 2.0)
     reward_delta : float, optional
-        Weight for penalties in reward (default: 1.0)
+        Weight for penalties in reward (default: 0.01)
+    reward_mode : str, optional
+        Reward mode: "absolute", "improvement", or "shaped" (default: "shaped")
+    gag_nonlinear : bool, optional
+        Apply non-linear transformation (Q_GAG * scale)² (default: True)
+    gag_scale : float, optional
+        Scaling factor for GAG transformation (default: 6.0)
+    exploration_bonus : float, optional
+        Bonus per step for improvement mode (default: 0.2)
+    silhouette_shift : float, optional
+        Shift amount to keep silhouette non-negative (default: 0.5)
+    early_termination_penalty : float, optional
+        Penalty for Accept action before minimum steps (default: -5.0)
+    min_steps_before_accept : int, optional
+        Minimum steps before Accept action is allowed without penalty (default: 20)
     """
 
     metadata = {"render_modes": ["human", "rgb_array"]}
@@ -62,9 +80,16 @@ class ClusteringEnv(gym.Env):
         normalize_state: bool = False,
         normalize_rewards: bool = True,
         render_mode: Optional[str] = None,
-        reward_alpha: float = 0.6,
-        reward_beta: float = 0.4,
-        reward_delta: float = 1.0,
+        reward_alpha: float = 0.2,
+        reward_beta: float = 2.0,
+        reward_delta: float = 0.01,
+        reward_mode: str = "shaped",
+        gag_nonlinear: bool = True,
+        gag_scale: float = 6.0,
+        exploration_bonus: float = 0.2,
+        silhouette_shift: float = 0.5,
+        early_termination_penalty: float = -5.0,
+        min_steps_before_accept: int = 20,
     ) -> None:
         super().__init__()
 
@@ -81,9 +106,10 @@ class ClusteringEnv(gym.Env):
             self.adata, self.gene_sets, normalize=self.normalize_state
         )
 
-        # Initialize action executor
+        # Initialize action executor (with gene_sets for GAG-aware actions)
         self.action_executor = ActionExecutor(
             self.adata,
+            gene_sets=self.gene_sets,
             min_resolution=0.1,
             max_resolution=2.0,
         )
@@ -95,6 +121,13 @@ class ClusteringEnv(gym.Env):
             alpha=reward_alpha,
             beta=reward_beta,
             delta=reward_delta,
+            reward_mode=reward_mode,
+            gag_nonlinear=gag_nonlinear,
+            gag_scale=gag_scale,
+            exploration_bonus=exploration_bonus,
+            silhouette_shift=silhouette_shift,
+            early_termination_penalty=early_termination_penalty,
+            min_steps_before_accept=min_steps_before_accept,
         )
 
         # Initialize reward normalizer (if enabled)
@@ -152,6 +185,9 @@ class ClusteringEnv(gym.Env):
         # Reset reward normalizer (if enabled)
         if self.reward_normalizer is not None:
             self.reward_normalizer.reset()
+
+        # Reset reward calculator state
+        self.reward_calculator.reset()
 
         # Perform initial clustering if not already done or if we need to reset
         # Check if neighbors graph exists, if not compute it
@@ -245,6 +281,8 @@ class ClusteringEnv(gym.Env):
             self.adata,
             previous_reward=self._previous_reward,
             resolution_clamped=action_result["resolution_clamped"],
+            action=action,
+            current_step=self.current_step,
         )
 
         # Apply normalization if enabled
@@ -280,14 +318,20 @@ class ClusteringEnv(gym.Env):
             # Reward components
             "raw_reward": raw_reward,
             "Q_cluster": reward_info["Q_cluster"],
-            "Q_GAG": reward_info["Q_GAG"],
+            "Q_GAG": reward_info["Q_GAG"],  # Raw GAG
+            "Q_GAG_transformed": reward_info.get("Q_GAG_transformed", reward_info["Q_GAG"]),
             "penalty": reward_info["penalty"],
-            "silhouette": reward_info["silhouette"],
+            "silhouette": reward_info["silhouette"],  # Raw silhouette (preserved)
+            "silhouette_for_reward": reward_info.get(
+                "silhouette_for_reward", reward_info["silhouette"]
+            ),
             "modularity": reward_info["modularity"],
             "balance": reward_info["balance"],
             "n_singletons": reward_info["n_singletons"],
             "mean_f_stat": reward_info["mean_f_stat"],
             "f_stats": reward_info.get("f_stats", {}),  # Per-gene-set F-statistics
+            "reward_mode": reward_info.get("reward_mode", "unknown"),
+            "baseline": reward_info.get("baseline"),  # For shaped mode
         }
 
         return next_state, reward, terminated, truncated, info

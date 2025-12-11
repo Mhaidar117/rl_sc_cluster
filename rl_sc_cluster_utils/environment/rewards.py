@@ -17,12 +17,15 @@ class RewardCalculator:
     """
     Compute composite reward for clustering environment.
 
-    Reward formula:
-        R = α·Q_cluster + β·Q_GAG - δ·Penalty
+    Supports three reward modes:
+    - "absolute": R = α·Q_cluster + β·Q_GAG_transformed - δ·Penalty
+    - "improvement": R = (current_potential - previous_potential) + exploration_bonus
+    - "shaped": R = raw_reward - baseline + offset (keeps rewards non-negative)
 
     Where:
     - Q_cluster: Clustering quality (silhouette, modularity, balance)
     - Q_GAG: GAG enrichment separation (normalized F-statistics)
+    - Q_GAG_transformed: (Q_GAG * gag_scale)² if gag_nonlinear=True
     - Penalty: Degenerate states, singletons, resolution bounds
 
     Parameters
@@ -32,16 +35,30 @@ class RewardCalculator:
     gene_sets : dict
         Dictionary mapping gene set names to lists of gene names
     alpha : float, optional
-        Weight for clustering quality (default: 0.6)
+        Weight for clustering quality (default: 0.2)
     beta : float, optional
-        Weight for GAG enrichment (default: 0.4)
+        Weight for GAG enrichment (default: 2.0)
     delta : float, optional
-        Weight for penalties (default: 1.0)
+        Weight for penalties (default: 0.01)
+    reward_mode : str, optional
+        Reward mode: "absolute", "improvement", or "shaped" (default: "shaped")
+    gag_nonlinear : bool, optional
+        Apply non-linear transformation (Q_GAG * scale)² (default: True)
+    gag_scale : float, optional
+        Scaling factor for GAG transformation (default: 6.0)
+    exploration_bonus : float, optional
+        Bonus per step for improvement mode (default: 0.2)
+    silhouette_shift : float, optional
+        Shift amount to keep silhouette non-negative (default: 0.5)
+    early_termination_penalty : float, optional
+        Penalty for Accept action before minimum steps (default: -5.0)
+    min_steps_before_accept : int, optional
+        Minimum steps before Accept action is allowed without penalty (default: 20)
 
     Examples
     --------
-    >>> calculator = RewardCalculator(adata, gene_sets)
-    >>> reward, info = calculator.compute_reward(adata, resolution_clamped=False)
+    >>> calculator = RewardCalculator(adata, gene_sets, reward_mode="shaped")
+    >>> reward, info = calculator.compute_reward(adata, action=0, current_step=5)
     >>> print(f"Reward: {reward:.4f}, Q_cluster: {info['Q_cluster']:.4f}")
     """
 
@@ -49,15 +66,29 @@ class RewardCalculator:
         self,
         adata: AnnData,
         gene_sets: Optional[Dict[str, List[str]]] = None,
-        alpha: float = 0.6,
-        beta: float = 0.4,
-        delta: float = 1.0,
+        alpha: float = 0.2,
+        beta: float = 2.0,
+        delta: float = 0.01,
+        reward_mode: str = "shaped",
+        gag_nonlinear: bool = True,
+        gag_scale: float = 6.0,
+        exploration_bonus: float = 0.2,
+        silhouette_shift: float = 0.5,
+        early_termination_penalty: float = -5.0,
+        min_steps_before_accept: int = 20,
     ) -> None:
         self.adata = adata
         self.gene_sets = gene_sets or {}
         self.alpha = alpha
         self.beta = beta
         self.delta = delta
+        self.reward_mode = reward_mode
+        self.gag_nonlinear = gag_nonlinear
+        self.gag_scale = gag_scale
+        self.exploration_bonus = exploration_bonus
+        self.silhouette_shift = silhouette_shift
+        self.early_termination_penalty = early_termination_penalty
+        self.min_steps_before_accept = min_steps_before_accept
 
         # Cache embeddings
         self._embeddings = get_embeddings(adata)
@@ -65,11 +96,18 @@ class RewardCalculator:
         # Check if neighbors graph exists
         self._neighbors_computed = "neighbors" in adata.uns
 
+        # Internal state for improvement and shaped modes
+        self._previous_potential: Optional[float] = None
+        self._reward_history: List[float] = []
+        self._baseline: float = 0.0
+
     def compute_reward(
         self,
         adata: AnnData,
         previous_reward: Optional[float] = None,
         resolution_clamped: bool = False,
+        action: Optional[int] = None,
+        current_step: Optional[int] = None,
     ) -> Tuple[float, Dict[str, Any]]:
         """
         Compute composite reward for current clustering state.
@@ -82,60 +120,128 @@ class RewardCalculator:
             Previous reward value (unused, kept for potential future use)
         resolution_clamped : bool, optional
             Whether resolution was clamped in last action (default: False)
+        action : int, optional
+            Action taken (0-4). Required for early termination penalty.
+        current_step : int, optional
+            Current step in episode. Required for early termination penalty.
 
         Returns
         -------
         reward : float
-            Composite reward value
+            Composite reward value (mode-dependent)
         info : dict
             Dictionary containing reward components:
             - Q_cluster: Clustering quality score
-            - Q_GAG: GAG enrichment score
+            - Q_GAG: Raw GAG enrichment score (before transformation)
+            - Q_GAG_transformed: Transformed GAG score (if gag_nonlinear=True)
             - penalty: Total penalty
-            - silhouette: Silhouette score
+            - silhouette: Raw silhouette score (preserved for interpretation)
+            - silhouette_for_reward: Silhouette value used in reward computation
             - modularity: Graph modularity
             - balance: Cluster balance
             - n_clusters: Number of clusters
             - n_singletons: Number of singleton clusters
             - mean_f_stat: Mean F-statistic across gene sets
+            - reward_mode: Reward mode used
+            - baseline: Baseline value (for shaped mode)
 
         Examples
         --------
-        >>> reward, info = calculator.compute_reward(adata)
+        >>> reward, info = calculator.compute_reward(adata, action=0, current_step=5)
         >>> print(f"Reward: {reward:.4f}")
         """
-        # Compute Q_cluster
+        # Compute Q_cluster (preserves raw silhouette)
         Q_cluster, q_cluster_info = self._compute_q_cluster(adata)
 
-        # Compute Q_GAG
+        # Compute Q_GAG (raw, before transformation)
         Q_GAG, q_gag_info = self._compute_q_gag(adata)
+
+        # Apply GAG non-linear transformation if enabled
+        if self.gag_nonlinear:
+            Q_GAG_transformed = (Q_GAG * self.gag_scale) ** 2
+        else:
+            Q_GAG_transformed = Q_GAG
 
         # Compute penalty
         penalty, penalty_info = self._compute_penalty(adata, resolution_clamped)
 
-        # Composite reward
-        reward = self.alpha * Q_cluster + self.beta * Q_GAG - self.delta * penalty
+        # Compute raw reward (before mode-specific shaping)
+        raw_reward = self.alpha * Q_cluster + self.beta * Q_GAG_transformed - self.delta * penalty
 
-        # Build info dict
+        # Apply reward mode
+        if self.reward_mode == "absolute":
+            reward = raw_reward
+
+        elif self.reward_mode == "improvement":
+            # Delta reward: improvement in potential
+            current_potential = raw_reward
+
+            if self._previous_potential is None:
+                # First step: use absolute potential + exploration bonus
+                reward = current_potential + self.exploration_bonus
+            else:
+                # Subsequent steps: improvement + exploration bonus
+                reward = (current_potential - self._previous_potential) + self.exploration_bonus
+
+            self._previous_potential = current_potential
+
+        elif self.reward_mode == "shaped":
+            # Shaped reward: subtract baseline to keep rewards non-negative
+            # Update baseline (running average)
+            self._reward_history.append(raw_reward)
+            if len(self._reward_history) > 100:  # Keep last 100 for baseline
+                self._reward_history.pop(0)
+            self._baseline = np.mean(self._reward_history) if self._reward_history else 0.0
+
+            # Shaped reward: subtract baseline, add small positive offset
+            reward = raw_reward - self._baseline + 0.1  # +0.1 ensures mostly positive
+
+        else:
+            raise ValueError(f"Unknown reward_mode: {self.reward_mode}")
+
+        # Apply early termination penalty if applicable
+        early_termination_penalty_applied = False
+        if action == 4 and current_step is not None:
+            if current_step < self.min_steps_before_accept:
+                reward = self.early_termination_penalty
+                early_termination_penalty_applied = True
+
+        # Build info dict (always include raw values)
+        # Note: "reward" is the return value, not included in info to avoid redundancy
         info = {
-            "reward": reward,
             "Q_cluster": Q_cluster,
-            "Q_GAG": Q_GAG,
+            "Q_GAG": Q_GAG,  # Raw GAG (before transformation)
+            "Q_GAG_transformed": Q_GAG_transformed if self.gag_nonlinear else Q_GAG,
             "penalty": penalty,
-            **q_cluster_info,
+            "reward_mode": self.reward_mode,
+            "baseline": self._baseline if self.reward_mode == "shaped" else None,
+            "early_termination_penalty_applied": early_termination_penalty_applied,
+            **q_cluster_info,  # Includes raw silhouette
             **q_gag_info,
             **penalty_info,
         }
 
         return reward, info
 
+    def reset(self) -> None:
+        """
+        Reset internal state for new episode.
+
+        Clears previous potential and baseline tracking.
+        """
+        self._previous_potential = None
+        # Keep baseline across episodes for shaped mode (or reset if desired)
+        # self._reward_history = []
+        # self._baseline = 0.0
+
     def _compute_q_cluster(self, adata: AnnData) -> Tuple[float, Dict[str, float]]:
         """
         Compute clustering quality score.
 
-        Formula: Q_cluster = 0.5 * scaled_silhouette + 0.3 * modularity + 0.2 * balance
+        Formula: Q_cluster = 0.5 * silhouette_for_reward + 0.3 * modularity + 0.2 * balance
 
-        Where scaled_silhouette = (silhouette + 1) / 2  # Maps [-1, 1] to [0, 1]
+        Always preserves raw silhouette in info dict for interpretation.
+        Uses shifted silhouette for reward computation to avoid negative values.
 
         Parameters
         ----------
@@ -147,7 +253,7 @@ class RewardCalculator:
         Q_cluster : float
             Clustering quality score
         info : dict
-            Individual component values
+            Individual component values, including raw silhouette
         """
         # Get quality metrics from shared utility
         silhouette, modularity, balance = compute_clustering_quality_metrics(
@@ -157,15 +263,16 @@ class RewardCalculator:
             cluster_key="clusters",
         )
 
-        # Scale silhouette to [0, 1] to prevent negative scores dominating
-        scaled_silhouette = (silhouette + 1) / 2
+        # For reward: shift silhouette to keep non-negative (preserves relative differences)
+        # This avoids negative rewards while preserving information
+        silhouette_for_reward = max(0.0, silhouette + self.silhouette_shift)
 
         # Weighted combination
-        Q_cluster = 0.5 * scaled_silhouette + 0.3 * modularity + 0.2 * balance
+        Q_cluster = 0.5 * silhouette_for_reward + 0.3 * modularity + 0.2 * balance
 
         info = {
-            "silhouette": silhouette,
-            "scaled_silhouette": scaled_silhouette,
+            "silhouette": silhouette,  # RAW silhouette (preserved!)
+            "silhouette_for_reward": silhouette_for_reward,  # What was used in reward
             "modularity": modularity,
             "balance": balance,
         }

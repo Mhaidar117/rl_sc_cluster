@@ -1,11 +1,13 @@
 """Action execution for the clustering environment."""
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from anndata import AnnData
 import numpy as np
 import scanpy as sc
 from sklearn.metrics import silhouette_score
+
+from .utils import compute_enrichment_scores
 
 
 def convert_cluster_ids_to_numeric(adata: AnnData) -> None:
@@ -38,16 +40,29 @@ class ActionExecutor:
     Execute actions that modify clustering state.
 
     Actions:
-    - 0: Split worst cluster
-    - 1: Merge closest pair
+    - 0: Split worst cluster (by GAG heterogeneity, fallback to silhouette)
+    - 1: Merge closest pair (by GAG similarity, fallback to centroid distance)
     - 2: Re-cluster resolution +0.1
     - 3: Re-cluster resolution -0.1
     - 4: Accept (no-op, handled in step())
+
+    GAG-aware action selection:
+    - Split: Finds cluster with highest GAG heterogeneity (within-cluster variance
+      of GAG enrichment scores). This targets clusters with diverse GAG profiles
+      that may contain multiple subtypes.
+    - Merge: Finds cluster pair with most similar mean GAG enrichment profiles.
+      This targets clusters that may be the same GAG subtype despite transcriptomic
+      differences.
+    - Fallback: If no gene sets are provided or GAG metrics unavailable, falls back
+      to silhouette-based split and centroid-based merge.
 
     Parameters
     ----------
     adata : AnnData
         Annotated data object containing single-cell data
+    gene_sets : dict, optional
+        Dictionary mapping gene set names to lists of gene names for GAG-aware
+        action selection (default: None, uses silhouette/centroid fallback)
     min_resolution : float, optional
         Minimum resolution for Leiden clustering (default: 0.1)
     max_resolution : float, optional
@@ -57,10 +72,12 @@ class ActionExecutor:
     def __init__(
         self,
         adata: AnnData,
+        gene_sets: Optional[Dict[str, List[str]]] = None,
         min_resolution: float = 0.1,
         max_resolution: float = 2.0,
     ) -> None:
         self.adata = adata
+        self.gene_sets = gene_sets or {}
         self.min_resolution = min_resolution
         self.max_resolution = max_resolution
 
@@ -298,7 +315,87 @@ class ActionExecutor:
 
     def _find_worst_cluster(self) -> Optional[int]:
         """
+        Find cluster to split using GAG heterogeneity (primary) or silhouette (fallback).
+
+        GAG-aware selection: Finds cluster with highest within-cluster variance
+        of GAG enrichment scores. High variance indicates the cluster contains
+        cells with diverse GAG profiles that may represent multiple subtypes.
+
+        Fallback: If no gene sets are provided or GAG metrics are unavailable,
+        falls back to finding cluster with lowest silhouette score.
+
+        Returns
+        -------
+        worst_cluster : int or None
+            Cluster ID to split, or None if not found
+        """
+        # Try GAG-aware selection first
+        if self.gene_sets:
+            gag_cluster = self._find_highest_gag_heterogeneity_cluster()
+            if gag_cluster is not None:
+                return gag_cluster
+
+        # Fallback to silhouette-based selection
+        return self._find_lowest_silhouette_cluster()
+
+    def _find_highest_gag_heterogeneity_cluster(self) -> Optional[int]:
+        """
+        Find cluster with highest GAG heterogeneity (within-cluster variance).
+
+        Computes the within-cluster variance of GAG enrichment scores for each
+        cluster across all gene sets. High variance indicates the cluster
+        contains cells with diverse GAG profiles.
+
+        Returns
+        -------
+        cluster_id : int or None
+            Cluster ID with highest GAG heterogeneity, or None if unavailable
+        """
+        if not self.gene_sets:
+            return None
+
+        cluster_heterogeneity = {}
+
+        for cluster_id in self.adata.obs["clusters"].unique():
+            cluster_mask = self.adata.obs["clusters"] == cluster_id
+            cluster_size = cluster_mask.sum()
+
+            # Skip small clusters (need variance)
+            if cluster_size < 3:
+                continue
+
+            # Compute GAG heterogeneity across all gene sets
+            variances = []
+            for gene_set_name, gene_set in self.gene_sets.items():
+                if not gene_set:
+                    continue
+
+                # Compute enrichment scores for this gene set
+                enrichment_scores = compute_enrichment_scores(self.adata, gene_set)
+                if enrichment_scores is None:
+                    continue
+
+                # Get within-cluster variance
+                cluster_scores = enrichment_scores[cluster_mask]
+                var = np.var(cluster_scores)
+                if not np.isnan(var):
+                    variances.append(var)
+
+            # Average variance across gene sets
+            if variances:
+                cluster_heterogeneity[cluster_id] = np.mean(variances)
+
+        if not cluster_heterogeneity:
+            return None
+
+        # Return cluster with highest heterogeneity (should be split)
+        return max(cluster_heterogeneity, key=cluster_heterogeneity.get)
+
+    def _find_lowest_silhouette_cluster(self) -> Optional[int]:
+        """
         Find cluster with lowest mean silhouette score.
+
+        Fallback method when GAG metrics are unavailable.
 
         Returns
         -------
@@ -341,26 +438,38 @@ class ActionExecutor:
 
     def _merge_closest_pair(self) -> Dict[str, any]:
         """
-        Merge the two clusters with minimum centroid distance.
+        Merge cluster pair using GAG similarity (primary) or centroid distance (fallback).
+
+        GAG-aware selection: Finds cluster pair with most similar mean GAG
+        enrichment profiles. Similar GAG profiles suggest the clusters may
+        represent the same GAG subtype despite transcriptomic differences.
+
+        Fallback: If no gene sets are provided or GAG metrics are unavailable,
+        falls back to finding cluster pair with minimum centroid distance.
 
         Returns
         -------
         result : dict
             Execution result dictionary
         """
-        # Compute centroids
-        centroids = self._compute_centroids()
-        if len(centroids) < 2:
-            return {
-                "success": False,
-                "error": "Cannot merge: less than 2 clusters",
-                "resolution_clamped": False,
-                "no_change": True,
-                "new_resolution": 0.5,  # Default, not used when no_change=True
-            }
+        # Try GAG-aware selection first
+        closest_pair = None
+        if self.gene_sets:
+            closest_pair = self._find_most_similar_gag_clusters()
 
-        # Find closest pair
-        closest_pair = self._find_closest_clusters(centroids)
+        # Fallback to centroid-based selection
+        if closest_pair is None:
+            centroids = self._compute_centroids()
+            if len(centroids) < 2:
+                return {
+                    "success": False,
+                    "error": "Cannot merge: less than 2 clusters",
+                    "resolution_clamped": False,
+                    "no_change": True,
+                    "new_resolution": 0.5,  # Default, not used when no_change=True
+                }
+            closest_pair = self._find_closest_clusters(centroids)
+
         if closest_pair is None:
             return {
                 "success": False,
@@ -388,6 +497,72 @@ class ActionExecutor:
             "no_change": False,
             "new_resolution": self.adata.uns.get("_current_resolution", 0.5),
         }
+
+    def _find_most_similar_gag_clusters(self) -> Optional[Tuple[int, int]]:
+        """
+        Find cluster pair with most similar mean GAG enrichment profiles.
+
+        Computes mean GAG enrichment for each cluster across all gene sets,
+        creating a GAG profile vector. Then finds the pair with smallest
+        Euclidean distance in GAG profile space.
+
+        Returns
+        -------
+        closest_pair : tuple or None
+            Tuple of (cluster1, cluster2) with most similar GAG profiles
+        """
+        if not self.gene_sets:
+            return None
+
+        # Compute GAG profile for each cluster
+        # Profile = [mean_enrichment_geneset1, mean_enrichment_geneset2, ...]
+        cluster_gag_profiles: Dict[int, np.ndarray] = {}
+
+        cluster_ids = list(self.adata.obs["clusters"].unique())
+        if len(cluster_ids) < 2:
+            return None
+
+        # First, compute enrichment scores for all gene sets
+        gene_set_enrichments = {}
+        for gene_set_name, gene_set in self.gene_sets.items():
+            if not gene_set:
+                continue
+            enrichment_scores = compute_enrichment_scores(self.adata, gene_set)
+            if enrichment_scores is not None:
+                gene_set_enrichments[gene_set_name] = enrichment_scores
+
+        if not gene_set_enrichments:
+            return None
+
+        # Build GAG profile for each cluster
+        for cluster_id in cluster_ids:
+            cluster_mask = self.adata.obs["clusters"] == cluster_id
+            profile = []
+
+            for gene_set_name, enrichment_scores in gene_set_enrichments.items():
+                cluster_mean = enrichment_scores[cluster_mask].mean()
+                if not np.isnan(cluster_mean):
+                    profile.append(cluster_mean)
+
+            if profile:
+                cluster_gag_profiles[cluster_id] = np.array(profile)
+
+        if len(cluster_gag_profiles) < 2:
+            return None
+
+        # Find pair with smallest GAG profile distance
+        min_dist = np.inf
+        closest_pair = None
+
+        profile_cluster_ids = list(cluster_gag_profiles.keys())
+        for i, c1 in enumerate(profile_cluster_ids):
+            for c2 in profile_cluster_ids[i + 1 :]:
+                dist = np.linalg.norm(cluster_gag_profiles[c1] - cluster_gag_profiles[c2])
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_pair = (c1, c2)
+
+        return closest_pair
 
     def _compute_centroids(self) -> Dict[int, np.ndarray]:
         """

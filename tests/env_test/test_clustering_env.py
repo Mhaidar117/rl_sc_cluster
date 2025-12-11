@@ -546,13 +546,27 @@ def test_reward_components_in_info(env):
     assert np.isfinite(info["penalty"])
 
 
-def test_reward_formula_applied(env):
-    """Test that reward follows formula: R = α·Q_cluster + β·Q_GAG - δ·Penalty."""
+def test_reward_formula_applied(mock_adata, gene_sets):
+    """Test that reward follows formula: R = α·Q_cluster + β·Q_GAG_transformed - δ·Penalty."""
+    from rl_sc_cluster_utils.environment import ClusteringEnv
+
+    # Use absolute mode to test the formula directly
+    env = ClusteringEnv(
+        mock_adata,
+        gene_sets=gene_sets,
+        reward_mode="absolute",  # Direct formula without shaping
+        reward_alpha=0.2,
+        reward_beta=2.0,
+        reward_delta=0.01,
+        gag_nonlinear=True,
+        gag_scale=6.0,
+    )
     env.reset()
     _, reward, _, _, info = env.step(0)
 
-    # Default weights: alpha=0.6, beta=0.4, delta=1.0
-    expected = 0.6 * info["Q_cluster"] + 0.4 * info["Q_GAG"] - 1.0 * info["penalty"]
+    # Default weights: alpha=0.2, beta=2.0, delta=0.01
+    # With gag_nonlinear=True, Q_GAG_transformed is used
+    expected = 0.2 * info["Q_cluster"] + 2.0 * info["Q_GAG_transformed"] - 0.01 * info["penalty"]
 
     # Raw reward (before normalization) should match formula
     assert info["raw_reward"] == pytest.approx(expected, rel=1e-6)
@@ -642,24 +656,36 @@ def test_reward_normalization_resets_on_episode_reset(mock_adata, gene_sets):
     # Normalizer should be reset
     assert env.reward_normalizer.count == 0
 
+    # Reward calculator should be reset (for improvement/shaped modes)
+    # Check that internal state is cleared
+    if env.reward_calculator.reward_mode == "improvement":
+        assert env.reward_calculator._previous_potential is None
+
 
 def test_custom_reward_weights(mock_adata, gene_sets):
     """Test custom reward weights."""
     from rl_sc_cluster_utils.environment import ClusteringEnv
 
+    # Use absolute mode to directly verify custom weights
     env = ClusteringEnv(
         mock_adata,
         gene_sets=gene_sets,
         reward_alpha=0.5,
         reward_beta=0.3,
         reward_delta=0.8,
+        reward_mode="absolute",  # Direct formula for testing
+        gag_nonlinear=True,
+        gag_scale=6.0,
     )
     env.reset()
 
     _, _, _, _, info = env.step(0)
 
     # Verify custom weights are applied
-    expected = 0.5 * info["Q_cluster"] + 0.3 * info["Q_GAG"] - 0.8 * info["penalty"]
+    # With gag_nonlinear=True, Q_GAG_transformed is used
+    Q_GAG_used = info.get("Q_GAG_transformed", info["Q_GAG"])
+    expected = 0.5 * info["Q_cluster"] + 0.3 * Q_GAG_used - 0.8 * info["penalty"]
+    # raw_reward should match expected in absolute mode
     assert info["raw_reward"] == pytest.approx(expected, rel=1e-6)
 
 

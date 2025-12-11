@@ -64,9 +64,12 @@ def test_reward_calculator_initialization(clustered_adata, gene_sets):
     """Test RewardCalculator initialization."""
     calculator = RewardCalculator(clustered_adata, gene_sets)
 
-    assert calculator.alpha == 0.6
-    assert calculator.beta == 0.4
-    assert calculator.delta == 1.0
+    # Updated defaults for GAG-focused reward
+    assert calculator.alpha == 0.2
+    assert calculator.beta == 2.0
+    assert calculator.delta == 0.01
+    assert calculator.reward_mode == "shaped"  # Default mode
+    assert calculator.gag_nonlinear == True  # Default: apply GAG transformation
     assert calculator._embeddings is not None
 
 
@@ -110,10 +113,11 @@ def test_compute_q_cluster_basic(reward_calculator, clustered_adata):
 
 
 def test_compute_q_cluster_formula(reward_calculator, clustered_adata):
-    """Test Q_cluster formula: 0.5*silhouette + 0.3*modularity + 0.2*balance."""
+    """Test Q_cluster formula: 0.5*silhouette_for_reward + 0.3*modularity + 0.2*balance."""
     Q_cluster, info = reward_calculator._compute_q_cluster(clustered_adata)
 
-    expected = 0.5 * info["silhouette"] + 0.3 * info["modularity"] + 0.2 * info["balance"]
+    # Q_cluster uses silhouette_for_reward (shifted), not raw silhouette
+    expected = 0.5 * info["silhouette_for_reward"] + 0.3 * info["modularity"] + 0.2 * info["balance"]
     assert Q_cluster == pytest.approx(expected, rel=1e-6)
 
 
@@ -136,10 +140,16 @@ def test_compute_q_cluster_no_clusters(mock_adata, gene_sets):
 
     Q_cluster, info = calculator._compute_q_cluster(mock_adata)
 
-    assert Q_cluster == pytest.approx(0.0)
+    # Raw silhouette should be 0 with no clusters
     assert info["silhouette"] == 0.0
     assert info["modularity"] == 0.0
     assert info["balance"] == 0.0
+
+    # silhouette_for_reward = max(0, 0 + 0.5) = 0.5 due to shift
+    assert info["silhouette_for_reward"] == 0.5
+
+    # Q_cluster = 0.5 * 0.5 + 0.3 * 0 + 0.2 * 0 = 0.25
+    assert Q_cluster == pytest.approx(0.25)
 
 
 # ============================================================================
@@ -283,22 +293,31 @@ def test_compute_reward_basic(reward_calculator, clustered_adata):
     # Reward should be a finite float
     assert np.isfinite(reward)
 
-    # Info should contain all components
-    assert "reward" in info
+    # Info should contain all components (reward is returned separately, not in info)
     assert "Q_cluster" in info
     assert "Q_GAG" in info
+    assert "Q_GAG_transformed" in info  # New field
     assert "penalty" in info
+    assert "reward_mode" in info  # New field
 
 
-def test_compute_reward_formula(reward_calculator, clustered_adata):
-    """Test reward formula: R = α·Q_cluster + β·Q_GAG - δ·Penalty."""
-    reward, info = reward_calculator.compute_reward(clustered_adata)
+def test_compute_reward_formula(clustered_adata, gene_sets):
+    """Test reward formula with absolute mode: R = α·Q_cluster + β·Q_GAG_transformed - δ·Penalty."""
+    # Use absolute mode to directly test the formula
+    calculator = RewardCalculator(
+        clustered_adata, gene_sets,
+        reward_mode="absolute",
+        gag_nonlinear=True,
+        gag_scale=6.0,
+    )
+    reward, info = calculator.compute_reward(clustered_adata)
 
     # Compute expected reward from components
+    # With gag_nonlinear=True: Q_GAG_transformed = (Q_GAG * gag_scale)²
     expected = (
-        reward_calculator.alpha * info["Q_cluster"]
-        + reward_calculator.beta * info["Q_GAG"]
-        - reward_calculator.delta * info["penalty"]
+        calculator.alpha * info["Q_cluster"]
+        + calculator.beta * info["Q_GAG_transformed"]
+        - calculator.delta * info["penalty"]
     )
     assert reward == pytest.approx(expected, rel=1e-6)
 
@@ -318,17 +337,20 @@ def test_compute_reward_info_completeness(reward_calculator, clustered_adata):
     """Test that reward info contains all expected fields."""
     _, info = reward_calculator.compute_reward(clustered_adata)
 
+    # Note: "reward" is returned separately, not in info dict
     expected_fields = [
-        "reward",
         "Q_cluster",
         "Q_GAG",
+        "Q_GAG_transformed",  # New field
         "penalty",
         "silhouette",
+        "silhouette_for_reward",  # New field
         "modularity",
         "balance",
         "mean_f_stat",
         "n_clusters",
         "n_singletons",
+        "reward_mode",  # New field
     ]
 
     for field in expected_fields:
@@ -501,23 +523,31 @@ def test_reward_with_invalid_gene_sets(clustered_adata):
 
 def test_reward_formula_matches_notebook_structure(clustered_adata, gene_sets):
     """Test that reward formula matches notebook Cell 23 structure."""
-    calculator = RewardCalculator(clustered_adata, gene_sets, alpha=0.6, beta=0.4, delta=1.0)
+    # Use absolute mode to match original formula
+    calculator = RewardCalculator(
+        clustered_adata, gene_sets, alpha=0.6, beta=0.4, delta=1.0, reward_mode="absolute"
+    )
 
     reward, info = calculator.compute_reward(clustered_adata)
 
-    # Verify formula: R = α·Q_cluster + β·Q_GAG - δ·Penalty
-    expected = 0.6 * info["Q_cluster"] + 0.4 * info["Q_GAG"] - 1.0 * info["penalty"]
+    # Verify formula: R = α·Q_cluster + β·Q_GAG_transformed - δ·Penalty
+    Q_GAG_used = info.get("Q_GAG_transformed", info["Q_GAG"])
+    expected = 0.6 * info["Q_cluster"] + 0.4 * Q_GAG_used - 1.0 * info["penalty"]
     assert reward == pytest.approx(expected, rel=1e-6)
 
 
 def test_q_cluster_weights_match_notebook(clustered_adata, gene_sets):
-    """Test Q_cluster weights match notebook: 0.5*silhouette + 0.3*modularity + 0.2*balance."""
+    """Test Q_cluster weights match notebook: 0.5*silhouette_for_reward + 0.3*modularity + 0.2*balance."""
     calculator = RewardCalculator(clustered_adata, gene_sets)
 
     Q_cluster, info = calculator._compute_q_cluster(clustered_adata)
 
-    # Notebook formula
-    expected = 0.5 * info["silhouette"] + 0.3 * info["modularity"] + 0.2 * info["balance"]
+    # Notebook formula uses silhouette_for_reward (shifted), not raw silhouette
+    expected = (
+        0.5 * info["silhouette_for_reward"]
+        + 0.3 * info["modularity"]
+        + 0.2 * info["balance"]
+    )
     assert Q_cluster == pytest.approx(expected, rel=1e-6)
 
 
@@ -558,3 +588,172 @@ def test_penalty_thresholds_match_notebook(mock_adata, gene_sets):
     penalty, info = calculator._compute_penalty(mock_adata)
     assert info["n_singletons"] == 5
     # Should have +0.1 per singleton
+
+
+# ============================================================================
+# Test New Reward Modes
+# ============================================================================
+
+
+def test_reward_mode_absolute(clustered_adata, gene_sets):
+    """Test absolute reward mode."""
+    calculator = RewardCalculator(
+        clustered_adata, gene_sets, reward_mode="absolute", alpha=0.6, beta=0.4, delta=1.0
+    )
+
+    reward, info = calculator.compute_reward(clustered_adata)
+
+    # Absolute mode: R = α·Q_cluster + β·Q_GAG_transformed - δ·Penalty
+    expected = (
+        0.6 * info["Q_cluster"]
+        + 0.4 * info.get("Q_GAG_transformed", info["Q_GAG"])
+        - 1.0 * info["penalty"]
+    )
+    assert reward == pytest.approx(expected, rel=1e-6)
+    assert info["reward_mode"] == "absolute"
+
+
+def test_reward_mode_improvement(clustered_adata, gene_sets):
+    """Test improvement reward mode."""
+    calculator = RewardCalculator(
+        clustered_adata,
+        gene_sets,
+        reward_mode="improvement",
+        exploration_bonus=0.2,
+        alpha=0.2,
+        beta=1.0,
+        delta=0.01,
+    )
+
+    # First step: should use absolute potential + exploration bonus
+    reward1, info1 = calculator.compute_reward(clustered_adata, action=0, current_step=1)
+    assert info1["reward_mode"] == "improvement"
+
+    # Second step: should be improvement + exploration bonus
+    reward2, info2 = calculator.compute_reward(clustered_adata, action=1, current_step=2)
+    assert reward2 >= reward1 - 10.0  # Allow some variance, but should be reasonable
+
+
+def test_reward_mode_shaped(clustered_adata, gene_sets):
+    """Test shaped reward mode (default)."""
+    calculator = RewardCalculator(
+        clustered_adata, gene_sets, reward_mode="shaped", alpha=0.2, beta=1.0, delta=0.01
+    )
+
+    reward, info = calculator.compute_reward(clustered_adata)
+
+    assert info["reward_mode"] == "shaped"
+    assert "baseline" in info
+    # Shaped mode should keep rewards mostly non-negative after baseline subtraction
+    assert reward >= -10.0  # Allow some negative but not extreme
+
+
+def test_gag_nonlinear_transformation(clustered_adata, gene_sets):
+    """Test GAG non-linear transformation."""
+    calculator_linear = RewardCalculator(
+        clustered_adata, gene_sets, gag_nonlinear=False, gag_scale=6.0
+    )
+    calculator_nonlinear = RewardCalculator(
+        clustered_adata, gene_sets, gag_nonlinear=True, gag_scale=6.0
+    )
+
+    reward_linear, info_linear = calculator_linear.compute_reward(clustered_adata)
+    reward_nonlinear, info_nonlinear = calculator_nonlinear.compute_reward(clustered_adata)
+
+    # Q_GAG should be same (raw)
+    assert info_linear["Q_GAG"] == pytest.approx(info_nonlinear["Q_GAG"], rel=1e-6)
+
+    # Q_GAG_transformed should be different
+    if info_nonlinear.get("Q_GAG_transformed") is not None:
+        expected_transformed = (info_nonlinear["Q_GAG"] * 6.0) ** 2
+        assert info_nonlinear["Q_GAG_transformed"] == pytest.approx(expected_transformed, rel=1e-6)
+
+
+def test_raw_silhouette_preserved(clustered_adata, gene_sets):
+    """Test that raw silhouette is preserved in info dict."""
+    calculator = RewardCalculator(clustered_adata, gene_sets, silhouette_shift=0.5)
+
+    reward, info = calculator.compute_reward(clustered_adata)
+
+    # Raw silhouette should be in info
+    assert "silhouette" in info
+    assert "silhouette_for_reward" in info
+
+    # Raw silhouette should be original value (can be negative)
+    raw_silhouette = info["silhouette"]
+    assert -1.0 <= raw_silhouette <= 1.0
+
+    # Silhouette for reward should be shifted
+    silhouette_for_reward = info["silhouette_for_reward"]
+    assert silhouette_for_reward >= 0.0  # Should be non-negative after shift
+
+
+def test_reward_calculator_reset(clustered_adata, gene_sets):
+    """Test reward calculator reset."""
+    calculator = RewardCalculator(
+        clustered_adata, gene_sets, reward_mode="improvement", exploration_bonus=0.2
+    )
+
+    # Compute reward to set internal state
+    calculator.compute_reward(clustered_adata, action=0, current_step=1)
+    assert calculator._previous_potential is not None
+
+    # Reset should clear internal state
+    calculator.reset()
+    assert calculator._previous_potential is None
+
+
+def test_early_termination_penalty(clustered_adata, gene_sets):
+    """Test early termination penalty."""
+    calculator = RewardCalculator(
+        clustered_adata,
+        gene_sets,
+        early_termination_penalty=-5.0,
+        min_steps_before_accept=20,
+    )
+
+    # Accept action before minimum steps should be penalized
+    reward_early, info_early = calculator.compute_reward(
+        clustered_adata, action=4, current_step=10
+    )
+    assert reward_early == -5.0
+
+    # Accept action after minimum steps should not be penalized
+    reward_late, info_late = calculator.compute_reward(
+        clustered_adata, action=4, current_step=25
+    )
+    assert reward_late != -5.0
+
+    # Non-accept action should not be penalized
+    reward_normal, info_normal = calculator.compute_reward(
+        clustered_adata, action=0, current_step=10
+    )
+    assert reward_normal != -5.0
+
+
+def test_reward_calculator_new_parameters(clustered_adata, gene_sets):
+    """Test RewardCalculator with all new parameters."""
+    calculator = RewardCalculator(
+        clustered_adata,
+        gene_sets,
+        reward_mode="shaped",
+        gag_nonlinear=True,
+        gag_scale=6.0,
+        exploration_bonus=0.2,
+        silhouette_shift=0.5,
+        early_termination_penalty=-5.0,
+        min_steps_before_accept=20,
+    )
+
+    assert calculator.reward_mode == "shaped"
+    assert calculator.gag_nonlinear == True
+    assert calculator.gag_scale == 6.0
+    assert calculator.exploration_bonus == 0.2
+    assert calculator.silhouette_shift == 0.5
+    assert calculator.early_termination_penalty == -5.0
+    assert calculator.min_steps_before_accept == 20
+
+    # Should compute reward successfully
+    reward, info = calculator.compute_reward(clustered_adata, action=0, current_step=5)
+    assert np.isfinite(reward)
+    assert info["reward_mode"] == "shaped"

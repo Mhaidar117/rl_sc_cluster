@@ -118,13 +118,14 @@ Where:
 - `Q_GAG = mean(log1p(f_stat) / 10.0)` across gene sets
 - `Penalty = degenerate_penalty + singleton_penalty + bounds_penalty`
 
-Default weights: α=0.6, β=0.4, δ=1.0
+Default weights: α=0.2, β=2.0, δ=0.01 (GAG-focused configuration)
+Default reward mode: "shaped" (avoids negative rewards)
 
 See [Reward Calculation](../environment/reward_calculation.md) for details.
 
 ## Methods
 
-### `__init__(adata, gene_sets=None, max_steps=15, normalize_state=False, normalize_rewards=False, render_mode=None, reward_alpha=0.6, reward_beta=0.4, reward_delta=1.0)`
+### `__init__(adata, gene_sets=None, max_steps=15, normalize_state=False, normalize_rewards=True, render_mode=None, reward_alpha=0.2, reward_beta=2.0, reward_delta=0.01, reward_mode="shaped", gag_nonlinear=True, gag_scale=6.0, exploration_bonus=0.2, silhouette_shift=0.5, early_termination_penalty=-5.0, min_steps_before_accept=20)`
 
 Initialize the environment.
 
@@ -136,9 +137,16 @@ Initialize the environment.
 - `normalize_state` (bool): Whether to normalize state vector (default: False)
 - `normalize_rewards` (bool): Whether to normalize rewards (default: True)
 - `render_mode` (str, optional): Render mode for visualization
-- `reward_alpha` (float): Weight for Q_cluster (default: 0.6)
-- `reward_beta` (float): Weight for Q_GAG (default: 0.4)
-- `reward_delta` (float): Weight for penalty (default: 1.0)
+- `reward_alpha` (float): Weight for Q_cluster (default: 0.2)
+- `reward_beta` (float): Weight for Q_GAG (default: 2.0)
+- `reward_delta` (float): Weight for penalty (default: 0.01)
+- `reward_mode` (str): Reward mode: "absolute", "improvement", or "shaped" (default: "shaped")
+- `gag_nonlinear` (bool): Apply non-linear GAG transformation (default: True)
+- `gag_scale` (float): Scaling factor for GAG transformation (default: 6.0)
+- `exploration_bonus` (float): Bonus per step for improvement mode (default: 0.2)
+- `silhouette_shift` (float): Shift amount to keep silhouette non-negative (default: 0.5)
+- `early_termination_penalty` (float): Penalty for Accept action before minimum steps (default: -5.0)
+- `min_steps_before_accept` (int): Minimum steps before Accept action allowed without penalty (default: 20)
 
 **Returns:** ClusteringEnv instance
 
