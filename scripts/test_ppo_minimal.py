@@ -596,8 +596,15 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
 
 def main():
     """Main test."""
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--n_cells", type=int, default=100)
+    parser.add_argument("--n_episodes", type=int, default=5)
+    parser.add_argument("--total_timesteps", type=int, default=500)
+    args = parser.parse_args()
+
     print("="*70)
-    print("PPO TEST - 100 cells, 5 episodes")
+    print(f"PPO TEST - {args.n_cells} cells, {args.n_episodes} episodes")
     print("="*70)
 
     data_path = project_root / "data" / "processed" / "human_interneurons.h5ad"
@@ -605,8 +612,8 @@ def main():
         print(f"ERROR: {data_path} not found")
         return 1
 
-    # Load 100 cells
-    adata = load_subset(data_path, n_cells=100)
+    # Load cells
+    adata = load_subset(data_path, n_cells=args.n_cells)
 
     # Create environment
     print(f"\n[ENV] Creating environment...")
@@ -625,12 +632,13 @@ def main():
 
     # Run episodes with PPO
     episode_metrics, model, episode_clustering_states, episode_rewards_dict, training_callback = run_episodes_with_ppo(
-        env, num_episodes=5, total_timesteps=500
+        env, num_episodes=args.n_episodes, total_timesteps=args.total_timesteps
     )
 
     # Save metrics
     print(f"\n[SAVE] Saving metrics...")
-    output_dir = project_root / "results" / "ppo_test_100c_5ep"
+    output_dir_name = f"ppo_test_{args.n_cells}c_{args.n_episodes}ep"
+    output_dir = project_root / "results" / output_dir_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save as CSV
