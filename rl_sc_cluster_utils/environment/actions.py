@@ -635,20 +635,20 @@ class ActionExecutor:
         )
 
         # Re-cluster with new resolution
-        sc.tl.leiden(
-            self.adata,
-            resolution=new_resolution,
-            key_added="clusters",
-            flavor="igraph",
-            n_iterations=2,
-            directed=False,
-        )
+        # sc.tl.leiden(
+        #     self.adata,
+        #     resolution=new_resolution,
+        #     key_added="clusters",
+        #     flavor="igraph",
+        #     n_iterations=2,
+        #     directed=False,
+        # )
 
         return {
             "success": True,
             "error": None,
             "resolution_clamped": clamped,
-            "no_change": False,
+            "no_change": new_resolution == current_resolution,
             "new_resolution": new_resolution,
         }
 
@@ -672,20 +672,20 @@ class ActionExecutor:
             new_resolution == self.min_resolution and current_resolution > self.min_resolution
         )
 
-        # Re-cluster with new resolution
-        sc.tl.leiden(
-            self.adata,
-            resolution=new_resolution,
-            key_added="clusters",
-            flavor="igraph",
-            n_iterations=2,
-            directed=False,
-        )
+        # # Re-cluster with new resolution
+        # sc.tl.leiden(
+        #     self.adata,
+        #     resolution=new_resolution,
+        #     key_added="clusters",
+        #     flavor="igraph",
+        #     n_iterations=2,
+        #     directed=False,
+        # )
 
         return {
             "success": True,
             "error": None,
             "resolution_clamped": clamped,
-            "no_change": False,
+            "no_change": new_resolution == current_resolution,
             "new_resolution": new_resolution,
         }
