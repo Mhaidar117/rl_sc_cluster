@@ -9,6 +9,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
+import warnings
+
+warnings.filterwarnings("ignore")
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -72,10 +75,25 @@ def load_subset(data_path, n_cells=1000):
     print(f"[LOAD] Using first {n_cells} cells (out of {adata.n_obs})")
     adata = adata[:n_cells].copy()
 
-    # Compute neighbors if missing (crucial for modularity score)
-    if "neighbors" not in adata.uns:
-        print("[LOAD] Computing neighbors graph for modularity...")
-        sc.pp.neighbors(adata, use_rep='X_scvi_large' if 'X_scvi_large' in adata.obsm else None)
+    # ALWAYS recompute neighbors after subsampling - the old graph is invalid
+    # The original neighbor graph references cells that no longer exist
+    print("[LOAD] Recomputing neighbors graph for subsampled data...")
+    use_rep = None
+    if 'X_scvi_large' in adata.obsm:
+        use_rep = 'X_scvi_large'
+    elif 'X_scvi' in adata.obsm:
+        use_rep = 'X_scvi'
+
+    # Use method='gauss' with sklearn backend to avoid pynndescent segfaults on Apple Silicon
+    sc.pp.neighbors(adata, use_rep=use_rep, n_neighbors=15, method='gauss')
+
+    # Verify neighbors were computed correctly
+    if 'connectivities' in adata.obsp:
+        nnz = adata.obsp['connectivities'].nnz
+        expected = n_cells * 15
+        print(f"[LOAD] Neighbors graph: {nnz} connections (expected ~{expected})")
+        if nnz < expected * 0.5:
+            print(f"[LOAD] WARNING: Sparse neighbor graph detected, may cause singleton clusters")
 
     print(f"[LOAD] ✓ Data loaded: {adata.shape}")
     return adata
@@ -232,9 +250,13 @@ def plot_trajectories(all_step_data, output_path):
     print(f"[PLOT] ✓ Saved to: {output_path}")
 
 
-def plot_best_episode_umaps(adata, best_episode_num, initial_clusters, final_clusters, output_path):
+def plot_best_episode_umaps(adata, best_episode_num, initial_clusters, final_clusters, output_dir):
     """
     Plot UMAP visualizations for the best episode: initial and final clustering states.
+
+    Creates two separate UMAP comparison plots:
+    1. Cluster assignments (before vs after refinement)
+    2. Per-cluster mean GAG enrichment (before vs after refinement)
 
     Parameters
     ----------
@@ -246,45 +268,112 @@ def plot_best_episode_umaps(adata, best_episode_num, initial_clusters, final_clu
         Initial clustering labels for the best episode
     final_clusters : np.ndarray
         Final clustering labels for the best episode
-    output_path : str
-        Path to save the plot
+    output_dir : str
+        Directory to save the plots
     """
     print(f"[PLOT] Creating UMAP plots for best episode {best_episode_num}...")
 
     # Ensure UMAP coordinates exist
     if 'X_umap' not in adata.obsm:
         print("[PLOT] Computing UMAP coordinates...")
-        if 'X_scvi' in adata.obsm:
+        if 'X_scvi_large' in adata.obsm:
             sc.tl.umap(adata, use_rep='X_scvi_large')
+        elif 'X_scvi' in adata.obsm:
+            sc.tl.umap(adata, use_rep='X_scvi')
         else:
             sc.tl.umap(adata)
-
-    # Create figure with two subplots side by side
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
     # Temporarily store original clusters
     original_clusters = adata.obs['clusters'].copy()
 
-    # Plot 1: Initial clustering
-    adata.obs['clusters'] = initial_clusters.astype(str)
-    sc.pl.umap(adata, color='GAG_overall', ax=axes[0], show=False,
-               title=f'Episode {best_episode_num}: Initial Clustering',
-               legend_loc='right margin')
+    # Get cluster counts for titles
+    n_initial = len(np.unique(initial_clusters))
+    n_final = len(np.unique(final_clusters))
 
-    # Plot 2: Final clustering
+    # =========================================================================
+    # PLOT 1: Cluster Assignments (Before vs After)
+    # =========================================================================
+    fig1, axes1 = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Initial clusters
+    adata.obs['clusters'] = initial_clusters.astype(str)
+    sc.pl.umap(adata, color='clusters', ax=axes1[0], show=False,
+               title=f'Before Refinement (n={n_initial} clusters)',
+               legend_loc=None)  # Omit legend to avoid clutter
+
+    # Final clusters
     adata.obs['clusters'] = final_clusters.astype(str)
-    sc.pl.umap(adata, color='GAG_overall', ax=axes[1], show=False,
-               title=f'Episode {best_episode_num}: Final Clustering',
-               cmap='viridis',
-               legend_loc='right margin')
+    sc.pl.umap(adata, color='clusters', ax=axes1[1], show=False,
+               title=f'After Refinement (n={n_final} clusters)',
+               legend_loc=None)  # Omit legend to avoid clutter
+
+    fig1.suptitle(f'Episode {best_episode_num}: Cluster Assignments', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    cluster_path = f"{output_dir}/umap_clusters_comparison.png"
+    plt.savefig(cluster_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"[PLOT] ✓ Cluster comparison saved to: {cluster_path}")
+
+    # =========================================================================
+    # PLOT 2: Per-Cluster Mean GAG Enrichment (Before vs After)
+    # =========================================================================
+    fig2, axes2 = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Check if GAG_overall exists
+    if 'GAG_overall' not in adata.obs.columns:
+        print("[PLOT] Warning: GAG_overall not found, skipping GAG enrichment plot")
+        return
+
+    gag_values = adata.obs['GAG_overall'].values
+
+    # Compute per-cluster mean GAG for initial clusters
+    adata.obs['clusters'] = initial_clusters.astype(str)
+    initial_cluster_means = {}
+    for c in np.unique(initial_clusters):
+        mask = initial_clusters == c
+        initial_cluster_means[str(c)] = np.mean(gag_values[mask])
+
+    # Map each cell to its cluster's mean GAG
+    adata.obs['cluster_mean_GAG_initial'] = adata.obs['clusters'].map(initial_cluster_means).astype(float)
+
+    # Compute per-cluster mean GAG for final clusters
+    adata.obs['clusters'] = final_clusters.astype(str)
+    final_cluster_means = {}
+    for c in np.unique(final_clusters):
+        mask = final_clusters == c
+        final_cluster_means[str(c)] = np.mean(gag_values[mask])
+
+    # Map each cell to its cluster's mean GAG
+    adata.obs['cluster_mean_GAG_final'] = adata.obs['clusters'].map(final_cluster_means).astype(float)
+
+    # Get common color scale
+    vmin = min(adata.obs['cluster_mean_GAG_initial'].min(), adata.obs['cluster_mean_GAG_final'].min())
+    vmax = max(adata.obs['cluster_mean_GAG_initial'].max(), adata.obs['cluster_mean_GAG_final'].max())
+
+    # Plot initial cluster mean GAG
+    sc.pl.umap(adata, color='cluster_mean_GAG_initial', ax=axes2[0], show=False,
+               title=f'Before Refinement (n={n_initial} clusters)',
+               cmap='viridis', vmin=vmin, vmax=vmax,
+               colorbar_loc='right')
+
+    # Plot final cluster mean GAG
+    sc.pl.umap(adata, color='cluster_mean_GAG_final', ax=axes2[1], show=False,
+               title=f'After Refinement (n={n_final} clusters)',
+               cmap='viridis', vmin=vmin, vmax=vmax,
+               colorbar_loc='right')
+
+    fig2.suptitle(f'Episode {best_episode_num}: Per-Cluster Mean GAG Enrichment', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    gag_path = f"{output_dir}/umap_gag_enrichment_comparison.png"
+    plt.savefig(gag_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"[PLOT] ✓ GAG enrichment comparison saved to: {gag_path}")
+
+    # Clean up temporary columns
+    adata.obs.drop(columns=['cluster_mean_GAG_initial', 'cluster_mean_GAG_final'], inplace=True, errors='ignore')
 
     # Restore original clusters
     adata.obs['clusters'] = original_clusters
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"[PLOT] ✓ Saved to: {output_path}")
 
 
 class TrainingMetricsCallback(BaseCallback):
@@ -592,7 +681,10 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
     episode_pbar.close()
     print(f"[COLLECT] ✓ Completed {num_episodes} episodes")
 
-    return all_step_data, model, episode_clustering_states, episode_rewards, training_callback
+    # Return the eval_env's adata so UMAP plotting uses the correct data
+    eval_adata = vec_env.envs[0].adata
+
+    return all_step_data, model, episode_clustering_states, episode_rewards, training_callback, eval_adata
 
 
 def main():
@@ -632,7 +724,7 @@ def main():
     print(f"[ENV] ✓ F-stats available: {list(info.get('f_stats', {}).keys())}")
 
     # Run episodes with PPO
-    episode_metrics, model, episode_clustering_states, episode_rewards_dict, training_callback = run_episodes_with_ppo(
+    episode_metrics, model, episode_clustering_states, episode_rewards_dict, training_callback, eval_adata = run_episodes_with_ppo(
         env, num_episodes=args.n_episodes, total_timesteps=args.total_timesteps
     )
 
@@ -686,7 +778,7 @@ def main():
     res_plot_path = output_dir / "resolution_clusters.png"
     training_plot_path = output_dir / "training_convergence.png"
     eval_plot_path = output_dir / "evaluation_convergence.png"
-    umap_plot_path = output_dir / "best_episode_umaps.png"
+    # UMAP plots are saved directly to output_dir by plot_best_episode_umaps()
 
     try:
         plot_trajectories(episode_metrics, str(plot_path))
@@ -706,11 +798,11 @@ def main():
 
             best_data = episode_clustering_states[best_episode_num]
             plot_best_episode_umaps(
-                env.adata,
+                eval_adata,  # Use eval_adata which has the actual cluster modifications
                 best_episode_num,
                 best_data['initial'],
                 best_data['final'],
-                str(umap_plot_path)
+                str(output_dir)  # Pass directory, function saves two separate plots
             )
     except Exception as e:
         print(f"[PLOT] Error creating plot: {e}")
