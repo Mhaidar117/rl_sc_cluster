@@ -75,7 +75,7 @@ def load_subset(data_path, n_cells=1000):
     # Compute neighbors if missing (crucial for modularity score)
     if "neighbors" not in adata.uns:
         print("[LOAD] Computing neighbors graph for modularity...")
-        sc.pp.neighbors(adata, use_rep='X_scvi' if 'X_scvi' in adata.obsm else None)
+        sc.pp.neighbors(adata, use_rep='X_scvi_large' if 'X_scvi_large' in adata.obsm else None)
 
     print(f"[LOAD] ✓ Data loaded: {adata.shape}")
     return adata
@@ -255,7 +255,7 @@ def plot_best_episode_umaps(adata, best_episode_num, initial_clusters, final_clu
     if 'X_umap' not in adata.obsm:
         print("[PLOT] Computing UMAP coordinates...")
         if 'X_scvi' in adata.obsm:
-            sc.tl.umap(adata, use_rep='X_scvi')
+            sc.tl.umap(adata, use_rep='X_scvi_large')
         else:
             sc.tl.umap(adata)
 
@@ -267,14 +267,15 @@ def plot_best_episode_umaps(adata, best_episode_num, initial_clusters, final_clu
 
     # Plot 1: Initial clustering
     adata.obs['clusters'] = initial_clusters.astype(str)
-    sc.pl.umap(adata, color='clusters', ax=axes[0], show=False,
+    sc.pl.umap(adata, color='GAG_overall', ax=axes[0], show=False,
                title=f'Episode {best_episode_num}: Initial Clustering',
                legend_loc='right margin')
 
     # Plot 2: Final clustering
     adata.obs['clusters'] = final_clusters.astype(str)
-    sc.pl.umap(adata, color='clusters', ax=axes[1], show=False,
+    sc.pl.umap(adata, color='GAG_overall', ax=axes[1], show=False,
                title=f'Episode {best_episode_num}: Final Clustering',
+               cmap='viridis',
                legend_loc='right margin')
 
     # Restore original clusters
@@ -455,8 +456,8 @@ def run_episodes_with_ppo(env, num_episodes=10, total_timesteps=4000):
         policy="MlpPolicy",
         env=vec_env,
         learning_rate=3e-4,
-        n_steps=100,    # Adjusted for smaller dataset
-        batch_size=50,
+        n_steps=250,    # Adjusted for smaller dataset
+        batch_size=512,
         n_epochs=10,
         gamma=0.99,
         gae_lambda=0.95,

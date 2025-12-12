@@ -3,10 +3,55 @@
 from typing import Dict, List, Optional, Tuple
 
 from anndata import AnnData
+import networkx as nx
+from networkx.algorithms.community.quality import modularity as nx_modularity
 import numpy as np
 import scanpy as sc
 from scipy.stats import entropy, f_oneway
 from sklearn.metrics import mutual_info_score, silhouette_score
+
+
+def _compute_graph_modularity(
+    adata: AnnData, cluster_key: str, neighbors_key: str = "neighbors"
+) -> float:
+    """
+    Compute modularity of a clustering using the kNN graph from Scanpy.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data object with neighbors graph
+    cluster_key : str
+        Key in adata.obs containing cluster labels
+    neighbors_key : str
+        Key in adata.uns containing neighbors info
+
+    Returns
+    -------
+    float
+        Modularity score
+    """
+    # Get the kNN graph Scanpy built
+    conn_key = adata.uns[neighbors_key]["connectivities_key"]
+    A = adata.obsp[conn_key]  # sparse adjacency matrix
+
+    # Build an undirected weighted graph
+    G = nx.from_scipy_sparse_array(A)
+
+    # Turn cluster labels into a list of communities
+    # IMPORTANT: Use integer indices (0 to n-1) to match graph node indices
+    labels = adata.obs[cluster_key].astype("category")
+
+    # Create communities using integer indices, not string cell names
+    communities = []
+    for c in labels.cat.categories:
+        # Get boolean mask for this cluster
+        mask = (labels == c).values
+        # Get integer indices where mask is True
+        cell_indices = set(np.where(mask)[0])
+        communities.append(cell_indices)
+
+    return nx_modularity(G, communities, weight="weight")
 
 
 def validate_adata(adata: AnnData) -> None:
@@ -118,14 +163,10 @@ def compute_clustering_quality_metrics(
         except Exception:
             silhouette_val = 0.0
 
-    # Graph modularity
+    # Graph modularity using networkx
     if neighbors_computed and n_clusters > 1:
         try:
-            modularity_val = sc.metrics.clustering.modularity(
-                adata,
-                label_key=cluster_key,
-                use_rep="X_scvi" if "X_scvi" in adata.obsm else None,
-            )
+            modularity_val = _compute_graph_modularity(adata, cluster_key)
         except Exception:
             modularity_val = 0.0
 
